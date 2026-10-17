@@ -1,0 +1,8 @@
+[package]
+name = "mder"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
+wxdragon = { version = "0.9.23", features = ["webview"] }

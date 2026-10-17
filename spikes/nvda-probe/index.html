@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>mder NVDA probe</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 50em; margin: 1em auto; padding: 0 1em; }
+  #controls { border: 1px solid #888; padding: 0.5em 1em; margin-bottom: 2em; }
+  #doc [data-line]:focus { outline: 3px solid #36f; }
+  table { border-collapse: collapse; }
+  td, th { border: 1px solid #888; padding: 0.2em 0.5em; }
+  pre { background: #eee; padding: 0.5em; }
+  .spacer { height: 60vh; }
+</style>
+</head>
+<body>
+
+<section id="controls" aria-labelledby="controls-h">
+  <h2 id="controls-h">Probe controls</h2>
+  <p id="conn">Checking the connection to the log server.</p>
+  <p>Every event is logged to the server. Use the note field to mark the start of each test.</p>
+  <p>
+    <label>Note <input id="note" type="text" size="30"></label>
+    <button id="add-note">Add note</button>
+    <button id="copy-log">Copy log</button>
+  </p>
+  <p>
+    <label><input id="opt-focusable" type="checkbox"> Blocks focusable (tabindex -1)</label>
+  </p>
+  <p>
+    <label>Click listeners
+      <select id="opt-click">
+        <option value="none">Document only (logging)</option>
+        <option value="main">Plus one on the rendered area</option>
+        <option value="block">Plus one on every block</option>
+      </select>
+    </label>
+  </p>
+  <h3>Move NVDA tests</h3>
+  <p>
+    <button id="jump-now">Focus the Tables heading now</button>
+    <button id="jump-later">Focus the third list item in 3 seconds</button>
+    <button id="jump-span-later">Focus the text inside the third list item in 3 seconds</button>
+    <button id="select-later">Select text in the quote in 3 seconds (no focus)</button>
+  </p>
+  <h3>Re-render tests</h3>
+  <p>
+    <button id="rerender-all">Replace the whole rendered area in 3 seconds</button>
+    <button id="rerender-one">Change only the second paragraph in 3 seconds</button>
+  </p>
+  <p id="status" role="status"></p>
+</section>
+
+<main id="doc" aria-label="Rendered document"></main>
+
+<template id="doc-src">
+  <h1 data-line="1">Sample document</h1>
+  <p data-line="3">First paragraph. This stands in for rendered markdown, and every block carries the source line it came from.</p>
+  <p data-line="5">Second paragraph, the one the single-paragraph re-render test changes.</p>
+  <h2 data-line="7">Lists</h2>
+  <ul data-line="9">
+    <li data-line="9">First list item</li>
+    <li data-line="10">Second list item</li>
+    <li data-line="11">Third list item, the 3 second focus target</li>
+    <li data-line="12">Fourth list item</li>
+  </ul>
+  <blockquote data-line="14"><p data-line="14">A quoted paragraph, the selection-only test target.</p></blockquote>
+  <div class="spacer" aria-hidden="true"></div>
+  <h2 data-line="16">Tables</h2>
+  <table data-line="18">
+    <tr data-line="18"><th>Key</th><th>Value</th></tr>
+    <tr data-line="20"><td>Alpha</td><td>1</td></tr>
+    <tr data-line="21"><td>Beta</td><td>2</td></tr>
+  </table>
+  <h2 data-line="23">Code</h2>
+  <pre data-line="25"><code>fn main() {
+    println!("hello");
+}</code></pre>
+  <div class="spacer" aria-hidden="true"></div>
+  <p data-line="29">Last paragraph, far down the page so reading it forces a scroll.</p>
+</template>
+
+<script>
+"use strict";
+const t0 = performance.now();
+const LOG = [];
+const $ = (id) => document.getElementById(id);
+const doc = $("doc");
+let renderCount = 0;
+
+const NOT_CONNECTED = "Not connected: events are not being saved. Open http://127.0.0.1:8765/ in Edge instead.";
+let connected = null;
+function setConnected(ok) {
+  if (ok === connected) return;
+  connected = ok;
+  $("conn").textContent = ok ? "Connected: events are being saved." : NOT_CONNECTED;
+}
+
+function log(type, data = {}) {
+  const e = { t: Math.round(performance.now() - t0), type, ...data };
+  LOG.push(e);
+  if (!location.protocol.startsWith("http")) { setConnected(false); return; }
+  fetch("/log", { method: "POST", body: JSON.stringify(e), keepalive: true })
+    .then((r) => setConnected(r.ok), () => setConnected(false));
+}
+
+function blockOf(node) {
+  while (node && node.nodeType !== 1) node = node.parentNode;
+  return node && node.closest ? node.closest("#doc [data-line]") : null;
+}
+
+function describe(node) {
+  if (!node) return null;
+  const b = blockOf(node);
+  if (b) return `${b.tagName.toLowerCase()} L${b.dataset.line} "${b.textContent.trim().slice(0, 30)}"`;
+  if (node.nodeType !== 1) return node.nodeName;
+  return node.id ? `#${node.id}` : node.tagName.toLowerCase();
+}
+
+// Which block is at the top of the viewport and which is at its centre.
+function viewport() {
+  const blocks = [...doc.querySelectorAll("[data-line]")];
+  const top = blocks.find((b) => b.getBoundingClientRect().bottom > 0);
+  const mid = innerHeight / 2;
+  const center = blocks.filter((b) => { const r = b.getBoundingClientRect(); return r.top <= mid && r.bottom >= mid; }).pop();
+  return { scrollY: Math.round(scrollY), top: describe(top), center: describe(center) };
+}
+
+function snapshot() {
+  const s = getSelection();
+  return { active: describe(document.activeElement), sel: describe(s.anchorNode), selOffset: s.anchorOffset, ...viewport() };
+}
+
+// ---- rendering and options ----
+function blockClick(e) { log("block-click-listener", { on: describe(e.currentTarget), target: describe(e.target) }); }
+function mainClick(e) { log("main-click-listener", { target: describe(e.target) }); }
+
+function applyOptions() {
+  const focusable = $("opt-focusable").checked;
+  const mode = $("opt-click").value;
+  doc.removeEventListener("click", mainClick);
+  if (mode === "main") doc.addEventListener("click", mainClick);
+  for (const b of doc.querySelectorAll("[data-line]")) {
+    if (focusable) b.tabIndex = -1; else b.removeAttribute("tabindex");
+    b.removeEventListener("click", blockClick);
+    if (mode === "block") b.addEventListener("click", blockClick);
+  }
+}
+
+function render(tweak) {
+  renderCount++;
+  doc.innerHTML = $("doc-src").innerHTML;
+  if (tweak) doc.querySelector('[data-line="3"]').append(` (re-render ${renderCount})`);
+  applyOptions();
+}
+
+$("opt-focusable").addEventListener("change", () => { applyOptions(); log("option", { focusable: $("opt-focusable").checked }); });
+$("opt-click").addEventListener("change", () => { applyOptions(); log("option", { click: $("opt-click").value }); });
+
+// ---- what the page can observe ----
+document.addEventListener("focusin", (e) => log("focusin", { target: describe(e.target) }), true);
+document.addEventListener("focusout", (e) => log("focusout", { target: describe(e.target) }), true);
+document.addEventListener("selectionchange", () => {
+  const s = getSelection();
+  log("selectionchange", { anchor: describe(s.anchorNode), offset: s.anchorOffset, collapsed: s.isCollapsed });
+});
+for (const type of ["click", "mousedown", "pointerdown", "contextmenu"]) {
+  document.addEventListener(type, (e) => log(type, {
+    target: describe(e.target), trusted: e.isTrusted, detail: e.detail,
+    x: Math.round(e.clientX), y: Math.round(e.clientY), pointerType: e.pointerType ?? null,
+  }), true);
+}
+document.addEventListener("keydown", (e) => log("keydown", {
+  key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, target: describe(e.target), ...snapshot(),
+}), true);
+let scrollTimer = 0;
+addEventListener("scroll", () => { clearTimeout(scrollTimer); scrollTimer = setTimeout(() => log("scroll", viewport()), 150); });
+addEventListener("focus", () => log("window-focus"));
+addEventListener("blur", () => log("window-blur"));
+let lastActive = null;
+setInterval(() => {
+  const a = describe(document.activeElement);
+  if (a !== lastActive) { lastActive = a; log("active-changed", { active: a }); }
+}, 200);
+
+// ---- move NVDA tests ----
+const later = (fn) => { $("status").textContent = "Armed, 3 seconds."; setTimeout(() => { $("status").textContent = ""; fn(); }, 3000); };
+const target = (line) => doc.querySelector(`[data-line="${line}"]:not(ul):not(table):not(blockquote)`);
+
+// Make the element focusable only while it holds focus, so NVDA doesn't treat
+// every block as a control.
+function focusTemporarily(el) {
+  if (el.hasAttribute("tabindex")) { el.focus(); return; }
+  el.tabIndex = -1;
+  el.addEventListener("blur", () => el.removeAttribute("tabindex"), { once: true });
+  el.focus();
+}
+
+// Wrap the list item's contents in a span and focus that instead of the li.
+function focusInnerSpan(li) {
+  let span = li.querySelector(":scope > span.probe-wrap");
+  if (!span) {
+    span = document.createElement("span");
+    span.className = "probe-wrap";
+    span.append(...li.childNodes);
+    li.append(span);
+  }
+  focusTemporarily(span);
+}
+
+$("jump-now").addEventListener("click", () => { log("test", { name: "focus Tables heading" }); focusTemporarily(target(16)); });
+$("jump-later").addEventListener("click", () => later(() => { log("test", { name: "focus third list item" }); focusTemporarily(target(11)); }));
+$("jump-span-later").addEventListener("click", () => later(() => { log("test", { name: "focus span in third list item" }); focusInnerSpan(target(11)); }));
+$("select-later").addEventListener("click", () => later(() => {
+  log("test", { name: "select quote text" });
+  const p = target(14);
+  getSelection().setBaseAndExtent(p.firstChild, 2, p.firstChild, 2);
+  p.scrollIntoView({ block: "center" });
+}));
+$("rerender-all").addEventListener("click", () => later(() => { log("test", { name: "replace whole doc", before: snapshot() }); render(true); setTimeout(() => log("after-rerender", snapshot()), 500); }));
+$("rerender-one").addEventListener("click", () => later(() => {
+  log("test", { name: "patch one paragraph", before: snapshot() });
+  target(5).textContent = `Second paragraph, patched at ${new Date().toLocaleTimeString()}.`;
+  setTimeout(() => log("after-rerender", snapshot()), 500);
+}));
+
+// ---- notes and log ----
+function addNote() {
+  const text = $("note").value.trim();
+  if (!text) return;
+  log("note", { text });
+  $("note").value = "";
+  $("status").textContent = "Note added.";
+}
+$("add-note").addEventListener("click", addNote);
+$("note").addEventListener("keydown", (e) => { if (e.key === "Enter") addNote(); });
+$("copy-log").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(LOG.map((e) => JSON.stringify(e)).join("\n")); $("status").textContent = `Copied ${LOG.length} events.`; }
+  catch { $("status").textContent = "Copy failed."; }
+});
+
+render(false);
+log("loaded", { ua: navigator.userAgent });
+</script>
+</body>
+</html>
