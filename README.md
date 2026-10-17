@@ -9,6 +9,20 @@ The window has two panes: a plain text editor for the markdown source, and a ren
 - The rendered view updates as you type, patching only what changed so the screen reader keeps its place.
 - If another program changes the file, mder reloads it. With unsaved edits, it asks first.
 
+How the syncing works, and what we learned about NVDA in web views along the way, is in [docs/nvda-findings.md](docs/nvda-findings.md).
+
+## Getting it
+
+Download the zip from the [releases page](https://github.com/valiant8086/mder/releases), unzip it anywhere, and run `mder.exe`. It's a single portable exe; nothing gets installed. It needs the WebView2 runtime, which ships with Windows 10 and 11.
+
+To add mder to Explorer's Open with menu for markdown files, run this once from wherever you keep it:
+
+```
+mder --register
+```
+
+It only adds mder as a choice; it doesn't change which program opens markdown files by default. It writes to your user's part of the registry, so it needs no admin rights. If you move mder, run it again. `mder --unregister` removes it.
+
 ## Command line
 
 ```
@@ -29,10 +43,27 @@ Set `MDER_LOG` to a file path to get a debug log.
 
 ## Building
 
-Needs Rust and, on Windows, the Visual Studio C++ tools with CMake and Ninja on the PATH. wxDragon downloads prebuilt wxWidgets on the first build.
+You need Rust, and on Windows the Visual Studio C++ build tools with CMake and Ninja (both come with Visual Studio's C++ workload). wxDragon downloads prebuilt wxWidgets on the first build.
 
 ```
 cargo build --release
 ```
 
-On Windows, the rendered view needs the WebView2 runtime, which ships with Windows 10 and 11.
+`scripts\dist.ps1` does a release build and packs it into `dist\` with the licenses. It finds CMake and Ninja from Visual Studio if they aren't on the PATH. Add `-Install C:\some\folder` to copy the result there too.
+
+Pushing a tag like `v0.1.0` makes GitHub build and publish a release.
+
+### Other platforms
+
+mder is built on wxWidgets, which also runs on Linux (with WebKitGTK) and macOS, so it should build there. Nobody has tried yet, and `--register` is Windows only. Reports and fixes are welcome.
+
+## License
+
+mder is licensed under either of
+
+- the [MIT license](LICENSE-MIT.txt), or
+- the [Apache License, Version 2.0](LICENSE-APACHE.txt)
+
+at your option. Please keep the credits in [NOTICE.txt](NOTICE.txt) when you use mder or parts of it.
+
+Unless you say otherwise, any contribution you submit for inclusion in mder is licensed as above, without any additional terms or conditions.

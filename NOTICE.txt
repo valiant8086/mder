@@ -1,0 +1,8 @@
+mder, a markdown editor and renderer built for screen readers
+Copyright 2026 valiant8086
+https://github.com/valiant8086/mder
+
+This product includes software developed by valiant8086.
+If you use mder or part of it in your own work, please credit valiant8086
+wherever your work shows credits for the software it uses, such as an
+About dialog.

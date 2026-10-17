@@ -2,7 +2,22 @@
 name = "mder"
 version = "0.1.0"
 edition = "2024"
+description = "A markdown editor and renderer built for screen readers, with the editor and rendered view kept in sync"
+authors = ["valiant8086"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/valiant8086/mder"
+readme = "README.md"
+keywords = ["markdown", "editor", "accessibility", "screen-reader", "nvda"]
+categories = ["text-editors", "accessibility"]
 
 [dependencies]
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
-wxdragon = { version = "0.9.23", features = ["webview"] }
+wxdragon = { version = "0.9.23", default-features = false, features = ["webview"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

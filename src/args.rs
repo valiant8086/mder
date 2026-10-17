@@ -1,5 +1,7 @@
-//! Command line: `mder [--edit] [--line N] [--find TEXT] [FILE[:LINE][#ANCHOR]]`.
+//! Command line: `mder [--edit] [--line N] [--find TEXT] [--anchor SLUG] [FILE[:LINE][#ANCHOR]]`,
+//! or `mder --register` / `mder --unregister`.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 /// Where to put the user once the file is open.
@@ -55,23 +57,41 @@ impl Target {
 pub struct Launch {
     pub path: Option<PathBuf>,
     pub target: Target,
+    /// Run this instead of opening a window.
+    pub command: Option<Command>,
 }
 
-pub fn parse(args: impl IntoIterator<Item = String>) -> Launch {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Command {
+    /// Add mder to the Open with list for markdown files.
+    Register,
+    Unregister,
+}
+
+/// Arguments arrive as OS strings: a file name doesn't have to be valid Unicode.
+pub fn parse(args: impl IntoIterator<Item = OsString>) -> Launch {
     let mut launch = Launch::default();
-    let mut file: Option<String> = None;
+    let mut file: Option<OsString> = None;
     let mut args = args.into_iter();
+    fn next_text(args: &mut impl Iterator<Item = OsString>) -> Option<String> {
+        args.next().map(|v| v.to_string_lossy().into_owned())
+    }
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--edit" => launch.target.edit = true,
-            "--line" => launch.target.line = args.next().and_then(|v| v.parse().ok()),
-            "--find" => launch.target.find = args.next(),
-            "--anchor" => launch.target.anchor = args.next(),
+        match arg.to_str() {
+            Some("--edit") => launch.target.edit = true,
+            Some("--register") => launch.command = Some(Command::Register),
+            Some("--unregister") => launch.command = Some(Command::Unregister),
+            Some("--line") => launch.target.line = next_text(&mut args).and_then(|v| v.parse().ok()),
+            Some("--find") => launch.target.find = next_text(&mut args),
+            Some("--anchor") => launch.target.anchor = next_text(&mut args),
             _ => file = Some(arg),
         }
     }
     if let Some(file) = file {
-        let (path, line, anchor) = split_location(&file);
+        let (path, line, anchor) = match file.to_str() {
+            Some(s) => split_location(s),
+            None => (PathBuf::from(file), None, None),
+        };
         launch.path = Some(path);
         launch.target.line = launch.target.line.or(line);
         launch.target.anchor = launch.target.anchor.take().or(anchor);
@@ -126,7 +146,14 @@ mod tests {
     use super::*;
 
     fn parse_str(s: &str) -> Launch {
-        parse(s.split_whitespace().map(String::from))
+        parse(s.split_whitespace().map(OsString::from))
+    }
+
+    #[test]
+    fn register_command() {
+        assert_eq!(parse_str("--register").command, Some(Command::Register));
+        assert_eq!(parse_str("--unregister").command, Some(Command::Unregister));
+        assert_eq!(parse_str("notes.md").command, None);
     }
 
     #[test]

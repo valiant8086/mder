@@ -2,6 +2,7 @@
 
 mod args;
 mod instance;
+mod register;
 mod render;
 
 use std::cell::RefCell;
@@ -20,6 +21,16 @@ use instance::Claim;
 const ID_SAVE: i32 = 1001;
 const ID_EXIT: i32 = 1002;
 const ID_SWITCH: i32 = 2001;
+const ID_ABOUT: i32 = 3001;
+
+const ABOUT: &str = concat!(
+    "mder ",
+    env!("CARGO_PKG_VERSION"),
+    "\n\nA markdown editor and renderer built for screen readers.\n\n",
+    "Copyright 2026 valiant8086.\n",
+    "Licensed under the MIT license or the Apache License 2.0, at your option.\n\n",
+    "https://github.com/valiant8086/mder"
+);
 
 const PAGE_JS: &str = include_str!("page/page.js");
 const PAGE_CSS: &str = include_str!("page/page.css");
@@ -330,11 +341,41 @@ fn js_string(s: &str) -> String {
     out
 }
 
+/// An update renames the running exe to `mder.exe.old` before putting the
+/// new one in place. Delete it once nothing is running it any more.
+fn remove_replaced_exe() {
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::fs::remove_file(exe.with_extension("exe.old"));
+    }
+}
+
+/// Runs `--register` or `--unregister`, reports the result in a message box, and exits.
+fn run_command(command: args::Command) -> ! {
+    let result = match command {
+        args::Command::Register => register::register(),
+        args::Command::Unregister => register::unregister(),
+    };
+    let (message, style, code) = match result {
+        Ok(message) => (message, MessageDialogStyle::IconInformation, 0),
+        Err(e) => (format!("That didn't work: {e}"), MessageDialogStyle::IconError, 1),
+    };
+    let owner = Frame::builder().with_title("mder").build();
+    MessageDialog::builder(&owner, &message, "mder")
+        .with_style(MessageDialogStyle::OK | style)
+        .build()
+        .show_modal();
+    std::process::exit(code);
+}
+
 fn main() {
     SystemOptions::set_option_by_int("msw.no-manifest-check", 1);
-    let launch = args::parse(std::env::args().skip(1));
+    remove_replaced_exe();
+    let launch = args::parse(std::env::args_os().skip(1));
 
     let _ = wxdragon::main(move |_| {
+        if let Some(command) = launch.command {
+            run_command(command);
+        }
         let targets: Rc<RefCell<VecDeque<Target>>> = Rc::default();
 
         let claim = match &launch.path {
@@ -372,7 +413,16 @@ fn main() {
         let view_menu = Menu::builder()
             .append_item(ID_SWITCH, "&Switch pane\tF6", "Move between the editor and the rendered view")
             .build();
-        frame.set_menu_bar(MenuBar::builder().append(file_menu, "&File").append(view_menu, "&View").build());
+        let help_menu = Menu::builder()
+            .append_item(ID_ABOUT, "&About mder", "Version, credits and license")
+            .build();
+        frame.set_menu_bar(
+            MenuBar::builder()
+                .append(file_menu, "&File")
+                .append(view_menu, "&View")
+                .append(help_menu, "&Help")
+                .build(),
+        );
         frame.create_status_bar(1, 0, -1, "status");
 
         let splitter = SplitterWindow::builder(&frame)
@@ -491,6 +541,12 @@ fn main() {
                 ID_SAVE => with_app(&app, |app| app.save()),
                 ID_EXIT => with_app(&app, |app| app.frame.close(true)),
                 ID_SWITCH => with_app(&app, |app| app.switch()),
+                ID_ABOUT => with_app(&app, |app| {
+                    MessageDialog::builder(&app.frame, ABOUT, "About mder")
+                        .with_style(MessageDialogStyle::OK | MessageDialogStyle::IconInformation)
+                        .build()
+                        .show_modal();
+                }),
                 _ => e.skip(true),
             });
         }
