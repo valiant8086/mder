@@ -119,10 +119,6 @@ mod native {
             sizer.add(&self.tree, proportion, flags, border);
         }
 
-        pub fn set_focus(&self) {
-            self.tree.set_focus();
-        }
-
         pub fn is_checked(&self, branch: usize, leaf: usize) -> bool {
             let mut inner = self.inner.borrow_mut();
             inner.sync();
@@ -350,10 +346,6 @@ mod generic {
 
         pub fn add_to(&self, sizer: &BoxSizer, proportion: i32, flags: SizerFlag, border: i32) {
             sizer.add(&self.tree, proportion, flags, border);
-        }
-
-        pub fn set_focus(&self) {
-            self.tree.set_focus();
         }
 
         pub fn is_checked(&self, branch: usize, leaf: usize) -> bool {

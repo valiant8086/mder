@@ -6,6 +6,7 @@ mod check_tree;
 mod integration;
 mod options_dialog;
 mod render;
+mod settings;
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -19,6 +20,7 @@ use wxdragon::widgets::{WebView, WebViewBackend};
 
 use args::Target;
 use instance::Claim;
+use settings::{Pane, Settings};
 
 const ID_SAVE: i32 = 1001;
 const ID_EXIT: i32 = 1002;
@@ -152,6 +154,8 @@ struct App {
     waiting_for_active: bool,
     /// Moves NVDA anyway if the activate event never comes.
     focus_timer: Option<Timer<Frame>>,
+    /// Which pane had focus when the window last stopped being active.
+    pane_when_inactive: Pane,
 }
 
 impl App {
@@ -289,32 +293,61 @@ impl App {
         }
     }
 
+    /// Opens a target in the right pane:
+    /// - `--edit` or `--view` wins;
+    /// - otherwise a fresh window follows the settings (one for a plain open,
+    ///   one for an open at a location);
+    /// - otherwise a window that already had the file stays in whichever
+    ///   pane you were in, and moves to the location there.
+    ///
+    /// A location that isn't found still opens the pane; it just doesn't move.
     fn go_to_target(&mut self, target: &Target) {
         debug_log(&format!("target {target:?}"));
         // A later launch usually means the file just changed.
         self.check_disk();
-        if target.is_empty() {
-            self.bring_forward();
-            return;
-        }
-        let Some(line) = self.target_line(target) else {
+        let has_location = !target.is_empty();
+        let line = if has_location { self.target_line(target) } else { None };
+        if has_location && line.is_none() {
             self.frame.set_status_text("That location wasn't found in the file", 0);
-            self.bring_forward();
-            return;
-        };
-        self.set_caret_line(line as i64);
-        if target.edit {
-            self.bring_forward();
-            self.editor.set_focus();
-            return;
         }
-        self.update_render();
-        self.last_switch = Instant::now();
-        // Bring the window forward, then move NVDA once Windows says the
-        // window is active, so NVDA sees the move live. This was the only
-        // approach that moved NVDA every time; see plans\focus-timing.md.
-        self.bring_forward();
-        self.view.set_focus();
+        let current = self.current_pane();
+        let pane = match target.pane {
+            Some(pane) => pane,
+            None if target.fresh => {
+                let settings = Settings::load();
+                if has_location { settings.location_pane } else { settings.start_pane }
+            }
+            None => current,
+        };
+        debug_log(&format!("pane {pane:?} (was {current:?}), line {line:?}"));
+        if let Some(line) = line {
+            self.set_caret_line(line as i64);
+        }
+        match pane {
+            Pane::Editor => {
+                self.bring_forward();
+                self.editor.set_focus();
+            }
+            Pane::View => {
+                // Move the screen reader when there's somewhere to go, or
+                // when this launch puts you in the view. Otherwise leave your
+                // reading place alone.
+                let move_reader = line.is_some() || target.fresh || current != Pane::View;
+                self.update_render();
+                self.last_switch = Instant::now();
+                self.bring_forward();
+                self.view.set_focus();
+                if move_reader {
+                    self.move_reader_when_active();
+                }
+            }
+        }
+    }
+
+    /// Moves the screen reader to the caret's block once Windows says the
+    /// window is active, so NVDA sees the move live. This was the only
+    /// approach that moved NVDA every time; see plans\focus-timing.md.
+    fn move_reader_when_active(&mut self) {
         if self.active {
             self.when_active();
         } else {
@@ -325,12 +358,43 @@ impl App {
         }
     }
 
+    /// The pane you're in, or were in when the window was last active.
+    fn current_pane(&self) -> Pane {
+        if !self.active {
+            self.pane_when_inactive
+        } else if self.editor.has_focus() {
+            Pane::Editor
+        } else {
+            Pane::View
+        }
+    }
+
     fn when_active(&mut self) {
         self.waiting_for_active = false;
         if let Some(timer) = &self.focus_timer {
             timer.stop();
         }
         self.focus_render_block();
+    }
+
+    /// Opens the menu bar, as Alt or F10 would, or with a letter, the menu it
+    /// stands for, as Alt plus that letter would. For the rendered view,
+    /// which keeps those keys to itself. Posted rather than sent, so the menu
+    /// opens after this event and its commands can reach the app.
+    fn open_menu(&self, letter: Option<char>) {
+        #[cfg(windows)]
+        {
+            #[link(name = "user32")]
+            unsafe extern "system" {
+                fn PostMessageW(hwnd: *mut std::ffi::c_void, msg: u32, wparam: usize, lparam: isize) -> i32;
+            }
+            const WM_SYSCOMMAND: u32 = 0x0112;
+            const SC_KEYMENU: usize = 0xF100;
+            let key = letter.map_or(0, |c| c as isize);
+            unsafe { PostMessageW(self.frame.get_handle(), WM_SYSCOMMAND, SC_KEYMENU, key) };
+        }
+        #[cfg(not(windows))]
+        let _ = letter;
     }
 
     fn bring_forward(&self) {
@@ -457,8 +521,12 @@ fn main() {
             }
             None => None,
         };
-        if !launch.target.is_empty() {
-            targets.borrow_mut().push_back(launch.target.clone());
+        // Opening a file always goes through go_to_target, which picks the
+        // pane from the settings. With no file, mder starts in the editor.
+        if launch.path.is_some() {
+            let mut target = launch.target.clone();
+            target.fresh = true;
+            targets.borrow_mut().push_back(target);
         }
 
         let doc = Doc::open(launch.path.clone());
@@ -526,6 +594,7 @@ fn main() {
             active: true,
             waiting_for_active: false,
             focus_timer: None,
+            pane_when_inactive: Pane::Editor,
         }));
 
         // Re-render shortly after typing stops.
@@ -575,6 +644,10 @@ fn main() {
                 if let WindowEventData::Activate(ref a) = event {
                     let active = a.is_active();
                     with_app(&app, |app| {
+                        if !active {
+                            // Focus is still where you left it at this point.
+                            app.pane_when_inactive = if app.editor.has_focus() { Pane::Editor } else { Pane::View };
+                        }
                         app.active = active;
                         debug_log(&format!("window active: {active}"));
                         if active && app.waiting_for_active {
@@ -618,6 +691,8 @@ fn main() {
                         app.switch();
                     } else if msg == "save" {
                         app.save();
+                    } else if let Some(key) = msg.strip_prefix("menu:") {
+                        app.open_menu(key.chars().next());
                     } else if let Some(line) = msg.strip_prefix("goto:").and_then(|l| l.parse().ok()) {
                         app.go_to_editor(Some(line));
                     }

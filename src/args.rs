@@ -1,8 +1,10 @@
-//! Command line: `mder [--edit] [--line N] [--find TEXT] [--anchor SLUG] [--log FILE] [FILE[:LINE][#ANCHOR]]`,
+//! Command line: `mder [--edit | --view] [--line N] [--find TEXT] [--anchor SLUG] [--log FILE] [FILE[:LINE][#ANCHOR]]`,
 //! or `mder --register` / `mder --unregister`.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+
+use crate::settings::Pane;
 
 /// Where to put the user once the file is open.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -10,8 +12,11 @@ pub struct Target {
     pub line: Option<usize>,
     pub anchor: Option<String>,
     pub find: Option<String>,
-    /// Land in the editor instead of the rendered view.
-    pub edit: bool,
+    /// `--edit` or `--view`: open in that pane, whatever the settings say.
+    pub pane: Option<Pane>,
+    /// Set for the launch that opens the window, as opposed to a later
+    /// launch handing a target to it. Not passed between processes.
+    pub fresh: bool,
     /// Write a debug log to this file. It travels with the target so that a
     /// window that already has the file can start logging too.
     pub log: Option<PathBuf>,
@@ -34,8 +39,8 @@ impl Target {
         if let Some(f) = &self.find {
             out.push_str(&format!("find={}\n", escape(f)));
         }
-        if self.edit {
-            out.push_str("edit=1\n");
+        if let Some(pane) = self.pane {
+            out.push_str(&format!("pane={}\n", pane.as_str()));
         }
         if let Some(log) = &self.log {
             out.push_str(&format!("log={}\n", escape(&log.to_string_lossy())));
@@ -51,7 +56,7 @@ impl Target {
                 "line" => t.line = value.parse().ok(),
                 "anchor" => t.anchor = Some(unescape(value)),
                 "find" => t.find = Some(unescape(value)),
-                "edit" => t.edit = value == "1",
+                "pane" => t.pane = Pane::parse(value),
                 "log" => t.log = Some(PathBuf::from(unescape(value))),
                 _ => {}
             }
@@ -85,7 +90,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Launch {
     }
     while let Some(arg) = args.next() {
         match arg.to_str() {
-            Some("--edit") => launch.target.edit = true,
+            Some("--edit") => launch.target.pane = Some(Pane::Editor),
+            Some("--view") => launch.target.pane = Some(Pane::View),
             Some("--register") => launch.command = Some(Command::Register),
             Some("--unregister") => launch.command = Some(Command::Unregister),
             Some("--line") => launch.target.line = next_text(&mut args).and_then(|v| v.parse().ok()),
@@ -185,9 +191,11 @@ mod tests {
     #[test]
     fn flags() {
         let l = parse_str("--edit --line 7 notes.md");
-        assert!(l.target.edit);
+        assert_eq!(l.target.pane, Some(Pane::Editor));
         assert_eq!(l.target.line, Some(7));
         assert_eq!(l.path, Some(PathBuf::from("notes.md")));
+        assert_eq!(parse_str("--view notes.md").target.pane, Some(Pane::View));
+        assert_eq!(parse_str("notes.md").target.pane, None);
     }
 
     #[test]
@@ -196,7 +204,8 @@ mod tests {
             line: Some(3),
             anchor: None,
             find: Some("a \\ b\nc".into()),
-            edit: true,
+            pane: Some(Pane::Editor),
+            fresh: false,
             log: Some(PathBuf::from(r"C:\logs\mder.log")),
         };
         assert_eq!(Target::decode(&t.encode()), t);

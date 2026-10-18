@@ -1,13 +1,16 @@
-//! Tools, Options. One tab so far, Integration: which file types offer mder
-//! in the system's Open with menu.
+//! Tools, Options. Two tabs so far:
+//! - General: which pane a file opens in.
+//! - Integration: which file types offer mder in the system's Open with menu.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use wxdragon::accessible::AccRole;
 use wxdragon::prelude::*;
 
 use crate::check_tree::{Branch, CheckTree};
 use crate::integration::{self, Change, KINDS, Status};
+use crate::settings::{Pane, Settings};
 
 pub fn show(parent: &Frame) {
     let dialog = Dialog::builder(parent, "Options")
@@ -17,9 +20,20 @@ pub fn show(parent: &Frame) {
     let sizer = BoxSizer::builder(Orientation::Vertical).build();
 
     let notebook = Notebook::builder(&dialog).build();
+    #[cfg(windows)]
+    tab_names::fix(notebook.get_handle());
+    let general_page = Panel::builder(&notebook).build();
+    let general = GeneralPage::new(&general_page, dialog);
+    notebook.add_page(&general_page, "General", true, None);
     let page = Panel::builder(&notebook).build();
     let integration = IntegrationPage::new(&page, dialog);
-    notebook.add_page(&page, "Integration", true, None);
+    notebook.add_page(&page, "Integration", false, None);
+    // Name each page after its tab, as a property page, so screen readers
+    // say which page you're on, as they do in Windows' own dialogs.
+    for (panel, name) in [(&general_page, "General"), (&page, "Integration")] {
+        panel.set_accessibility_label(name);
+        panel.set_accessibility_role(AccRole::PropertyPage);
+    }
     sizer.add(&notebook, 1, SizerFlag::Expand | SizerFlag::All, 8);
 
     let ok = Button::builder(&dialog).with_id(ID_OK).with_label("OK").build();
@@ -36,7 +50,9 @@ pub fn show(parent: &Frame) {
     {
         let integration = integration.clone();
         ok.on_click(move |_| {
-            if integration.apply() {
+            // Apply both tabs, and only close if both worked.
+            let saved = general.apply();
+            if integration.apply() && saved {
                 dialog.end_modal(ID_OK);
             }
         });
@@ -44,14 +60,144 @@ pub fn show(parent: &Frame) {
     {
         let integration = integration.clone();
         apply.on_click(move |_| {
+            general.apply();
             integration.apply();
         });
     }
 
-    integration.focus();
+    general.focus();
     dialog.show_modal();
     integration.close();
     dialog.destroy();
+}
+
+/// To avoid flicker, wxWidgets gives its tab control a private copy of the
+/// Windows class, called "_wx_SysTabCtl32". Windows' accessibility support
+/// picks how to describe a control by its class name and doesn't recognise
+/// that one, so screen readers hear tabs with no names. (wxWidgets'
+/// wxFULL_REPAINT_ON_RESIZE should avoid the copy, but it checks the style
+/// before storing it, so it never does.) The documented fix: answer the
+/// screen reader with Windows' standard tab control description.
+#[cfg(windows)]
+mod tab_names {
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    struct Guid(u32, u16, u16, [u8; 8]);
+    const IID_IACCESSIBLE: Guid = Guid(0x618736E0, 0x3C3D, 0x11CF, [0x81, 0x0C, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71]);
+    const WM_GETOBJECT: u32 = 0x003D;
+    const WM_NCDESTROY: u32 = 0x0082;
+    const OBJID_CLIENT: i32 = -4;
+    const SUBCLASS_ID: usize = 0x6D64_6572; // "mder"
+
+    type SubclassProc = unsafe extern "system" fn(*mut c_void, u32, usize, isize, usize, usize) -> isize;
+
+    #[link(name = "comctl32")]
+    unsafe extern "system" {
+        fn SetWindowSubclass(hwnd: *mut c_void, proc: SubclassProc, id: usize, data: usize) -> i32;
+        fn RemoveWindowSubclass(hwnd: *mut c_void, proc: SubclassProc, id: usize) -> i32;
+        fn DefSubclassProc(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize) -> isize;
+    }
+    #[link(name = "oleacc")]
+    unsafe extern "system" {
+        fn CreateStdAccessibleProxyW(hwnd: *mut c_void, class: *const u16, id: i32, iid: *const Guid, out: *mut *mut c_void) -> i32;
+        fn LresultFromObject(iid: *const Guid, wparam: usize, object: *mut c_void) -> isize;
+    }
+
+    pub fn fix(hwnd: *mut c_void) {
+        unsafe {
+            SetWindowSubclass(hwnd, proc, SUBCLASS_ID, 0);
+        }
+    }
+
+    unsafe extern "system" fn proc(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize, _id: usize, _data: usize) -> isize {
+        unsafe {
+            if msg == WM_GETOBJECT && lparam as i32 == OBJID_CLIENT {
+                let class: Vec<u16> = "SysTabControl32\0".encode_utf16().collect();
+                let mut object: *mut c_void = std::ptr::null_mut();
+                if CreateStdAccessibleProxyW(hwnd, class.as_ptr(), OBJID_CLIENT, &IID_IACCESSIBLE, &mut object) >= 0 && !object.is_null() {
+                    let result = LresultFromObject(&IID_IACCESSIBLE, wparam, object);
+                    // LresultFromObject keeps its own reference; drop ours.
+                    let vtable = *(object as *const *const [unsafe extern "system" fn(*mut c_void) -> u32; 3]);
+                    ((*vtable)[2])(object);
+                    return result;
+                }
+            }
+            if msg == WM_NCDESTROY {
+                RemoveWindowSubclass(hwnd, proc, SUBCLASS_ID);
+            }
+            DefSubclassProc(hwnd, msg, wparam, lparam)
+        }
+    }
+}
+
+/// The General tab.
+#[derive(Clone, Copy)]
+struct GeneralPage {
+    dialog: Dialog,
+    start: RadioBox,
+    at_location: RadioBox,
+}
+
+/// The radio buttons' choices, in order.
+const PANE_CHOICES: [&str; 2] = ["Rendered view", "Editor"];
+
+fn pane_index(pane: Pane) -> i32 {
+    match pane {
+        Pane::View => 0,
+        Pane::Editor => 1,
+    }
+}
+
+fn pane_at(index: i32) -> Pane {
+    if index == 1 { Pane::Editor } else { Pane::View }
+}
+
+impl GeneralPage {
+    fn new(page: &Panel, dialog: Dialog) -> Self {
+        let sizer = BoxSizer::builder(Orientation::Vertical).build();
+        let start = RadioBox::builder(page, &PANE_CHOICES)
+            .with_label("When opening a file, start in:")
+            .build();
+        sizer.add(&start, 0, SizerFlag::Expand | SizerFlag::All, 8);
+        let at_location = RadioBox::builder(page, &PANE_CHOICES)
+            .with_label("When a command opens a file at a location, start in:")
+            .build();
+        sizer.add(&at_location, 0, SizerFlag::Expand | SizerFlag::All, 8);
+        let note = StaticText::builder(page)
+            .with_label("--edit or --view on the command line overrides these for that launch. A file that's already open stays in the pane you're in.")
+            .build();
+        note.wrap(500);
+        sizer.add(&note, 0, SizerFlag::All, 8);
+        page.set_sizer(sizer, true);
+
+        let settings = Settings::load();
+        start.set_selection(pane_index(settings.start_pane));
+        at_location.set_selection(pane_index(settings.location_pane));
+        GeneralPage { dialog, start, at_location }
+    }
+
+    /// Saves the choices. Returns false if that failed.
+    fn apply(&self) -> bool {
+        let settings = Settings {
+            start_pane: pane_at(self.start.get_selection()),
+            location_pane: pane_at(self.at_location.get_selection()),
+        };
+        match settings.save() {
+            Ok(_) => true,
+            Err(e) => {
+                MessageDialog::builder(&self.dialog, &format!("The settings couldn't be saved: {e}"), "Options")
+                    .with_style(MessageDialogStyle::OK | MessageDialogStyle::IconError)
+                    .build()
+                    .show_modal();
+                false
+            }
+        }
+    }
+
+    fn focus(&self) {
+        self.start.set_focus();
+    }
 }
 
 /// The Integration tab.
@@ -161,12 +307,6 @@ impl IntegrationPage {
             return false;
         }
         true
-    }
-
-    fn focus(&self) {
-        if let Some(tree) = &self.tree {
-            tree.set_focus();
-        }
     }
 
     fn close(&self) {

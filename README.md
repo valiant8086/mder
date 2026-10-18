@@ -24,7 +24,7 @@ To offer mder when you open markdown files from Explorer, use Tools, Options, or
 ## Command line
 
 ```
-mder [--edit] [--line N] [--find TEXT] [--anchor SLUG] [--log FILE] [FILE[:LINE][#SLUG]]
+mder [--edit | --view] [--line N] [--find TEXT] [--anchor SLUG] [--log FILE] [FILE[:LINE][#SLUG]]
 mder --register
 mder --unregister
 ```
@@ -33,13 +33,24 @@ mder --unregister
 - `mder notes.md:42` or `mder --line 42 notes.md` goes to line 42.
 - `mder notes.md#setup-steps` or `mder --anchor setup-steps notes.md` goes to the heading with that anchor (GitHub style: lowercase, punctuation dropped, spaces as hyphens).
 - `mder --find "some text" notes.md` goes to the first line containing that text. An exact match wins, otherwise the match ignores case.
-- `--edit` lands in the editor instead of the rendered view.
+- `--edit` opens in the editor, and `--view` in the rendered view, whatever the settings say. See [Which pane a file opens in](#which-pane-a-file-opens-in).
 - `--log FILE` writes a debug log to that file, for troubleshooting. See [Debug log](#debug-log).
 - `mder --register` offers mder for every file type it supports, and `mder --unregister` removes it again. See [Open with](#open-with).
 
 Each file opens in one window. Running mder again for a file that's already open in another instance of it sends the location (if provided) to that window, brings it to the front and exits with code 0. The window reloads the file from disk first. Exit code 1 means the open window didn't respond.
 
 This makes mder easy to drive from another program or AI coding agent. For example, after changing a file, Claude could run `mder --find "the changed text" file.md` to show you the exact context in the rendered view. Just pressing enter is all it takes to then make your own edits.
+
+### Which pane a file opens in
+
+Tools, Options, on the General tab, has two settings, both set to the rendered view at first:
+
+- **When opening a file, start in:** for a plain open, such as from Explorer or `mder notes.md`.
+- **When a command opens a file at a location, start in:** for an open with a line, heading or `--find`. This applies even if the location isn't found; mder just doesn't move anywhere new.
+
+`--edit` or `--view` overrides both for that launch. A file that's already open stays in whichever pane you're in, and moves to the location there, unless `--edit` or `--view` says otherwise. With no file, mder starts in the editor.
+
+Settings are saved in `mder.ini`, next to mder.exe, so mder stays portable. If that folder can't be written to, they go in `%APPDATA%\mder` instead.
 
 ### Debug log
 
