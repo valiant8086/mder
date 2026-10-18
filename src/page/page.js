@@ -24,13 +24,24 @@ function focusTemporarily(el) {
   el.focus();
 }
 
-// Called by the app when switching from the editor: put NVDA on this line.
+// An empty element that can be focused just before the target. NVDA ignores
+// focus coming back to the element it last saw focused, so focusing this
+// first makes the move to the target always look new. It's made once, at
+// load: changing the page right before a focus move makes NVDA lose it.
+const sentinel = document.createElement("span");
+sentinel.id = "mder-sentinel";
+sentinel.tabIndex = -1;
+document.body.appendChild(sentinel);
+
+// Called by the app to put the screen reader on this line.
 window.mderFocusLine = (line) => {
   const block = blockAt(line) || doc.querySelector("[data-line]");
   if (!block) return "empty";
   const target = block.tagName === "LI" ? (block.querySelector(":scope > .li-text") || block) : block;
+  sentinel.focus();
   focusTemporarily(target);
-  return block.dataset.line;
+  // For mder's debug log: did the page really take focus?
+  return `${block.dataset.line}, page has focus: ${document.hasFocus()}, focused: ${document.activeElement === target}`;
 };
 
 // Called by the app after an edit: patch the DOM in place so NVDA keeps its place.

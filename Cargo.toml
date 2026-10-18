@@ -17,6 +17,9 @@ wxdragon = { version = "0.9.23", default-features = false, features = ["webview"
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 
+[build-dependencies]
+embed-manifest = "1.4"
+
 [profile.release]
 lto = true
 codegen-units = 1

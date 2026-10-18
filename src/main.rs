@@ -2,7 +2,9 @@
 
 mod args;
 mod instance;
-mod register;
+mod check_tree;
+mod integration;
+mod options_dialog;
 mod render;
 
 use std::cell::RefCell;
@@ -22,6 +24,7 @@ const ID_SAVE: i32 = 1001;
 const ID_EXIT: i32 = 1002;
 const ID_SWITCH: i32 = 2001;
 const ID_ABOUT: i32 = 3001;
+const ID_OPTIONS: i32 = 4001;
 
 const ABOUT: &str = concat!(
     "mder ",
@@ -36,9 +39,7 @@ const PAGE_JS: &str = include_str!("page/page.js");
 const PAGE_CSS: &str = include_str!("page/page.css");
 
 /// How often to look at the file on disk for outside changes.
-const DISK_POLL_MS: i32 = 1000;
-
-const SAMPLE: &str = "# Welcome to mder
+const DISK_POLL_MS: i32 = 1000;const SAMPLE: &str = "# Welcome to mder
 
 Press F6 to switch between this editor and the rendered view.
 
@@ -69,10 +70,22 @@ fn main() {
 > A quote to finish.
 ";
 
-/// Appends to the file named by MDER_LOG, when it's set.
+/// Where `--log FILE` asked for a debug log. Set at startup, or when a later
+/// launch with `--log` hands this window a target and it isn't logging yet.
+static LOG_FILE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+fn start_logging(path: &Path) {
+    let mut log = LOG_FILE.lock().unwrap_or_else(|e| e.into_inner());
+    if log.is_none() {
+        *log = Some(path.to_path_buf());
+    }
+}
+
+/// Appends to the `--log` file, if there is one.
 fn debug_log(msg: &str) {
     use std::io::Write;
-    let Some(path) = std::env::var_os("MDER_LOG") else { return };
+    let log = LOG_FILE.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(path) = log.as_ref() else { return };
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "[{}] {msg}", std::process::id());
     }
@@ -133,6 +146,12 @@ struct App {
     _claim: Option<Claim>,
     /// Timers stop when dropped.
     timers: Vec<Timer<Frame>>,
+    /// Whether the window is the active one, from its activate events.
+    active: bool,
+    /// A jump waits for the window to become active before moving NVDA.
+    waiting_for_active: bool,
+    /// Moves NVDA anyway if the activate event never comes.
+    focus_timer: Option<Timer<Frame>>,
 }
 
 impl App {
@@ -156,8 +175,16 @@ impl App {
     }
 
     fn go_to_render(&mut self) {
-        let line = self.caret_line();
         self.view.set_focus();
+        self.focus_render_block();
+    }
+
+    /// Focuses the block for the caret's line inside the page. The page
+    /// focuses an empty element first, so NVDA never sees the move as focus
+    /// returning to the element it last saw, which it would ignore.
+    /// See plans\focus-timing.md.
+    fn focus_render_block(&self) {
+        let line = self.caret_line();
         let result = self.view.run_script(&format!("mderFocusLine({line})"));
         debug_log(&format!("focus render line {line}: {result:?}"));
     }
@@ -266,25 +293,52 @@ impl App {
         debug_log(&format!("target {target:?}"));
         // A later launch usually means the file just changed.
         self.check_disk();
-        if self.frame.is_iconized() {
-            self.frame.iconize(false);
-        }
-        self.frame.raise();
         if target.is_empty() {
+            self.bring_forward();
             return;
         }
         let Some(line) = self.target_line(target) else {
             self.frame.set_status_text("That location wasn't found in the file", 0);
+            self.bring_forward();
             return;
         };
         self.set_caret_line(line as i64);
         if target.edit {
+            self.bring_forward();
             self.editor.set_focus();
-        } else {
-            self.update_render();
-            self.last_switch = Instant::now();
-            self.go_to_render();
+            return;
         }
+        self.update_render();
+        self.last_switch = Instant::now();
+        // Bring the window forward, then move NVDA once Windows says the
+        // window is active, so NVDA sees the move live. This was the only
+        // approach that moved NVDA every time; see plans\focus-timing.md.
+        self.bring_forward();
+        self.view.set_focus();
+        if self.active {
+            self.when_active();
+        } else {
+            self.waiting_for_active = true;
+            if let Some(timer) = &self.focus_timer {
+                timer.start(1500, true);
+            }
+        }
+    }
+
+    fn when_active(&mut self) {
+        self.waiting_for_active = false;
+        if let Some(timer) = &self.focus_timer {
+            timer.stop();
+        }
+        self.focus_render_block();
+    }
+
+    fn bring_forward(&self) {
+        if self.frame.is_iconized() {
+            self.frame.iconize(false);
+        }
+        self.frame.raise();
+        debug_log("brought the window forward");
     }
 
     fn target_line(&self, target: &Target) -> Option<usize> {
@@ -310,16 +364,13 @@ fn with_app(app: &Rc<RefCell<App>>, f: impl FnOnce(&mut App)) {
     }
 }
 
-fn page(title: &str, body: &str) -> String {
+/// The rendered view's page. It has no title: the window title already
+/// names the file, and screen readers would announce it on every F6.
+fn page(body: &str) -> String {
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{}</title><style>{PAGE_CSS}</style></head>\
-         <body><div id=\"doc\">{body}</div><script>{PAGE_JS}</script></body></html>",
-        escape_html(title)
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><style>{PAGE_CSS}</style></head>\
+         <body><div id=\"doc\">{body}</div><script>{PAGE_JS}</script></body></html>"
     )
-}
-
-fn escape_html(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 /// A JavaScript string literal for `s`.
@@ -352,8 +403,8 @@ fn remove_replaced_exe() {
 /// Runs `--register` or `--unregister`, reports the result in a message box, and exits.
 fn run_command(command: args::Command) -> ! {
     let result = match command {
-        args::Command::Register => register::register(),
-        args::Command::Unregister => register::unregister(),
+        args::Command::Register => integration::register_all(),
+        args::Command::Unregister => integration::unregister_all(),
     };
     let (message, style, code) = match result {
         Ok(message) => (message, MessageDialogStyle::IconInformation, 0),
@@ -368,9 +419,12 @@ fn run_command(command: args::Command) -> ! {
 }
 
 fn main() {
-    SystemOptions::set_option_by_int("msw.no-manifest-check", 1);
     remove_replaced_exe();
     let launch = args::parse(std::env::args_os().skip(1));
+    if let Some(log) = &launch.target.log {
+        start_logging(log);
+        debug_log(&format!("started: {:?} {:?}", launch.path, launch.target));
+    }
 
     let _ = wxdragon::main(move |_| {
         if let Some(command) = launch.command {
@@ -382,13 +436,22 @@ fn main() {
             Some(path) => {
                 let queue = targets.clone();
                 let on_target = move |t: Target| {
+                    if let Some(log) = &t.log {
+                        start_logging(log);
+                    }
                     debug_log(&format!("handed {t:?}"));
                     queue.borrow_mut().push_back(t);
                     wxdragon::app::wake_up_idle();
                 };
                 match instance::claim(path, &launch.target, on_target) {
-                    Some(Claim::HandedOff) => std::process::exit(0),
-                    Some(Claim::Unreachable) => std::process::exit(1),
+                    Some(Claim::HandedOff) => {
+                        debug_log("the file is already open; handed the target to that window");
+                        std::process::exit(0)
+                    }
+                    Some(Claim::Unreachable) => {
+                        debug_log("the file is already open, but that window didn't respond");
+                        std::process::exit(1)
+                    }
                     other => other,
                 }
             }
@@ -413,6 +476,9 @@ fn main() {
         let view_menu = Menu::builder()
             .append_item(ID_SWITCH, "&Switch pane\tF6", "Move between the editor and the rendered view")
             .build();
+        let tools_menu = Menu::builder()
+            .append_item(ID_OPTIONS, "&Options...", "Settings, such as which file types offer mder in Open with")
+            .build();
         let help_menu = Menu::builder()
             .append_item(ID_ABOUT, "&About mder", "Version, credits and license")
             .build();
@@ -420,6 +486,7 @@ fn main() {
             MenuBar::builder()
                 .append(file_menu, "&File")
                 .append(view_menu, "&View")
+                .append(tools_menu, "&Tools")
                 .append(help_menu, "&Help")
                 .build(),
         );
@@ -444,7 +511,7 @@ fn main() {
 
         editor.set_value(&doc.saved);
         editor.set_insertion_point(0);
-        view.set_page(&page(&doc.name(), &render::to_html(&doc.saved)), "about:blank");
+        view.set_page(&page(&render::to_html(&doc.saved)), "about:blank");
 
         let app = Rc::new(RefCell::new(App {
             frame,
@@ -456,6 +523,9 @@ fn main() {
             targets,
             _claim: claim,
             timers: Vec::new(),
+            active: true,
+            waiting_for_active: false,
+            focus_timer: None,
         }));
 
         // Re-render shortly after typing stops.
@@ -485,6 +555,38 @@ fn main() {
         disk_timer.start(DISK_POLL_MS, false);
         app.borrow_mut().timers.push(disk_timer);
 
+        // A jump moves NVDA once the window is active; this covers the case
+        // where the activate event never comes.
+        let focus_timer = Timer::new(&frame);
+        {
+            let app = app.clone();
+            focus_timer.on_tick(move |_| {
+                with_app(&app, |app| {
+                    if app.waiting_for_active {
+                        app.when_active();
+                    }
+                })
+            });
+        }
+        app.borrow_mut().focus_timer = Some(focus_timer);
+        {
+            let app = app.clone();
+            frame.on_activate(move |event| {
+                if let WindowEventData::Activate(ref a) = event {
+                    let active = a.is_active();
+                    with_app(&app, |app| {
+                        app.active = active;
+                        debug_log(&format!("window active: {active}"));
+                        if active && app.waiting_for_active {
+                            app.when_active();
+                        }
+                    });
+                }
+                // wxWidgets restores focus to the last focused control.
+                event.skip(true);
+            });
+        }
+
         {
             let app = app.clone();
             frame.on_idle(move |event| {
@@ -498,6 +600,10 @@ fn main() {
             view.on_loaded(move |_| {
                 with_app(&app, |app| {
                     app.page_loaded = true;
+                    let focused = app.view.run_script(
+                        "document.activeElement && document.activeElement !== document.body ? document.activeElement.textContent.slice(0, 40) : 'nothing'",
+                    );
+                    debug_log(&format!("page loaded, focused: {focused:?}"));
                     app.run_targets();
                 })
             });
@@ -541,6 +647,12 @@ fn main() {
                 ID_SAVE => with_app(&app, |app| app.save()),
                 ID_EXIT => with_app(&app, |app| app.frame.close(true)),
                 ID_SWITCH => with_app(&app, |app| app.switch()),
+                ID_OPTIONS => {
+                    // Not inside with_app: the dialog's own event loop runs
+                    // mder's timers, which need the app.
+                    let frame = app.borrow().frame;
+                    options_dialog::show(&frame);
+                }
                 ID_ABOUT => with_app(&app, |app| {
                     MessageDialog::builder(&app.frame, ABOUT, "About mder")
                         .with_style(MessageDialogStyle::OK | MessageDialogStyle::IconInformation)

@@ -4,29 +4,29 @@ A markdown editor and renderer built for screen readers, NVDA first.
 
 The window has two panes: a plain text editor for the markdown source, and a rendered view you read in browse mode. They stay in sync:
 
-- F6 switches panes. Going to the rendered view puts the screen reader on the block for the editor's caret line.
-- Enter on a block in the rendered view takes you to that line in the editor.
+- F6 switches panes. It's a toggle.
+  - Going to the rendered view puts the screen reader on the block for the editor's caret line.
+  - Going back to the editor doesn't move the editor's caret. To move the caret to where you are in the rendered view, press Enter there instead.
+  - So if you read ahead in the rendered view and press F6, the editor is still where you left it, and the next F6 takes you to the editor's line in the rendered view, not to where you were reading. Something to be mindful of.
+- Enter on a block in the rendered view takes you to that line in the editor. Clicking a block with the mouse does the same.
 - The rendered view updates as you type, patching only what changed so the screen reader keeps its place.
-- If another program changes the file, mder reloads it. With unsaved edits, it asks first.
 
-How the syncing works, and what we learned about NVDA in web views along the way, is in [docs/nvda-findings.md](docs/nvda-findings.md).
+So to keep both positions in step while running a screen reader, use F6 to go from the editor to the rendered view, and Enter to go from the rendered view to the editor. It works this way because a web page can't tell where a screen reader is reading. Screen readers read web pages from their own copy of the content, so moving around doesn't touch the page itself. Pressing Enter makes the screen reader click the block you're on, which the page can see, so that's the solution. How the syncing works, and what we learned about NVDA in web views along the way, is in [docs/nvda-findings.md](docs/nvda-findings.md).
+
+Also, if another program changes the file, mder reloads it. With unsaved edits, it asks first.
 
 ## Getting it
 
 Download the zip from the [releases page](https://github.com/valiant8086/mder/releases), unzip it anywhere, and run `mder.exe`. It's a single portable exe; nothing gets installed. It needs the WebView2 runtime, which ships with Windows 10 and 11.
 
-To add mder to Explorer's Open with menu for markdown files, run this once from wherever you keep it:
-
-```
-mder --register
-```
-
-It only adds mder as a choice; it doesn't change which program opens markdown files by default. It writes to your user's part of the registry, so it needs no admin rights. If you move mder, run it again. `mder --unregister` removes it.
+To offer mder when you open markdown files from Explorer, use Tools, Options, or run `mder --register` once. See [Open with](#open-with) below.
 
 ## Command line
 
 ```
-mder [--edit] [--line N] [--find TEXT] [--anchor SLUG] [FILE[:LINE][#SLUG]]
+mder [--edit] [--line N] [--find TEXT] [--anchor SLUG] [--log FILE] [FILE[:LINE][#SLUG]]
+mder --register
+mder --unregister
 ```
 
 - `mder notes.md` opens the file.
@@ -34,12 +34,27 @@ mder [--edit] [--line N] [--find TEXT] [--anchor SLUG] [FILE[:LINE][#SLUG]]
 - `mder notes.md#setup-steps` or `mder --anchor setup-steps notes.md` goes to the heading with that anchor (GitHub style: lowercase, punctuation dropped, spaces as hyphens).
 - `mder --find "some text" notes.md` goes to the first line containing that text. An exact match wins, otherwise the match ignores case.
 - `--edit` lands in the editor instead of the rendered view.
+- `--log FILE` writes a debug log to that file, for troubleshooting. See [Debug log](#debug-log).
+- `mder --register` offers mder for every file type it supports, and `mder --unregister` removes it again. See [Open with](#open-with).
 
-Each file opens in one window. Running mder again for a file that's already open sends the location to that window, brings it to the front and exits with code 0. The window reloads the file from disk first. Exit code 1 means the open window didn't respond.
+Each file opens in one window. Running mder again for a file that's already open in another instance of it sends the location (if provided) to that window, brings it to the front and exits with code 0. The window reloads the file from disk first. Exit code 1 means the open window didn't respond.
 
-This makes mder easy to drive from another program. For example, after changing a file, run `mder --find "the changed text" file.md` to show it to the reader.
+This makes mder easy to drive from another program or AI coding agent. For example, after changing a file, Claude could run `mder --find "the changed text" file.md` to show you the exact context in the rendered view. Just pressing enter is all it takes to then make your own edits.
 
-Set `MDER_LOG` to a file path to get a debug log.
+### Debug log
+
+`mder --log C:\path\mder.log notes.md` makes that window add a line to the log file whenever it gets a location to go to, moves the editor's caret, puts the screen reader on a block in the rendered view, or notices the file changed on disk. Each line starts with mder's process number, so lines from different windows can be told apart. Without `--log`, mder writes no log at all.
+
+If the file is already open, the window that has it starts logging to that file too, if it wasn't logging already. A later Options setting will turn the log on for every launch; `--log` will override it for that launch.
+
+### Open with
+
+On Windows, registering adds mder to the list in the "How do you want to open this file?" dialog. In Explorer, open a markdown file's context menu, choose Open with, then "Choose another app", and mder is in that list. mder never changes which program opens a file type by default. If you want markdown files to always open in mder, check "Always use this app" in that dialog.
+
+- **Tools, Options**, on the Integration tab, has a checklist of file types, grouped by kind. Each box shows whether that type is registered right now. Change them and press OK or Apply.
+- **`mder --register`** does the same for every type at once, and **`mder --unregister`** removes them all. Run it from wherever you keep mder.
+
+Registering writes to your user's part of the registry, so it needs no admin rights. It records where mder is, so if you move mder, register it again from its new place. Tools, Options shows any type still pointing at the old copy, and checking it moves it to this one.
 
 ## Building
 
@@ -55,7 +70,7 @@ Pushing a tag like `v0.1.0` makes GitHub build and publish a release.
 
 ### Other platforms
 
-mder is built on wxWidgets, which also runs on Linux (with WebKitGTK) and macOS, so it should build there. Nobody has tried yet, and `--register` is Windows only. Reports and fixes are welcome.
+mder is built on wxWidgets, which also runs on Linux (with WebKitGTK) and macOS, so it should build there. Nobody has tried yet, and registering for Open with is Windows only so far. Reports and fixes are welcome.
 
 ## License
 

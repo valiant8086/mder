@@ -1,4 +1,4 @@
-//! Command line: `mder [--edit] [--line N] [--find TEXT] [--anchor SLUG] [FILE[:LINE][#ANCHOR]]`,
+//! Command line: `mder [--edit] [--line N] [--find TEXT] [--anchor SLUG] [--log FILE] [FILE[:LINE][#ANCHOR]]`,
 //! or `mder --register` / `mder --unregister`.
 
 use std::ffi::OsString;
@@ -12,6 +12,9 @@ pub struct Target {
     pub find: Option<String>,
     /// Land in the editor instead of the rendered view.
     pub edit: bool,
+    /// Write a debug log to this file. It travels with the target so that a
+    /// window that already has the file can start logging too.
+    pub log: Option<PathBuf>,
 }
 
 impl Target {
@@ -34,6 +37,9 @@ impl Target {
         if self.edit {
             out.push_str("edit=1\n");
         }
+        if let Some(log) = &self.log {
+            out.push_str(&format!("log={}\n", escape(&log.to_string_lossy())));
+        }
         out
     }
 
@@ -46,6 +52,7 @@ impl Target {
                 "anchor" => t.anchor = Some(unescape(value)),
                 "find" => t.find = Some(unescape(value)),
                 "edit" => t.edit = value == "1",
+                "log" => t.log = Some(PathBuf::from(unescape(value))),
                 _ => {}
             }
         }
@@ -84,6 +91,11 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Launch {
             Some("--line") => launch.target.line = next_text(&mut args).and_then(|v| v.parse().ok()),
             Some("--find") => launch.target.find = next_text(&mut args),
             Some("--anchor") => launch.target.anchor = next_text(&mut args),
+            Some("--log") => {
+                // Made absolute now: a window that's already open may be
+                // running in a different folder.
+                launch.target.log = args.next().map(|p| std::path::absolute(&p).unwrap_or_else(|_| p.into()));
+            }
             _ => file = Some(arg),
         }
     }
@@ -180,7 +192,22 @@ mod tests {
 
     #[test]
     fn target_round_trips() {
-        let t = Target { line: Some(3), anchor: None, find: Some("a \\ b\nc".into()), edit: true };
+        let t = Target {
+            line: Some(3),
+            anchor: None,
+            find: Some("a \\ b\nc".into()),
+            edit: true,
+            log: Some(PathBuf::from(r"C:\logs\mder.log")),
+        };
         assert_eq!(Target::decode(&t.encode()), t);
+    }
+
+    #[test]
+    fn log_path_is_made_absolute() {
+        let l = parse_str("--log mder.log notes.md");
+        let log = l.target.log.clone().unwrap();
+        assert!(log.is_absolute(), "{log:?}");
+        assert!(log.ends_with("mder.log"));
+        assert!(l.target.is_empty(), "a log alone isn't a location");
     }
 }
