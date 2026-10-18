@@ -20,8 +20,10 @@ pub struct FileKind {
     /// Shown in the Options dialog.
     pub name: &'static str,
     /// Windows ProgID shared by every extension of this kind.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub prog_id: &'static str,
     /// What Explorer calls a file of this kind.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub type_name: &'static str,
     pub extensions: &'static [&'static str],
     /// For Linux desktop files.
@@ -43,6 +45,7 @@ pub enum Status {
     /// Registered, and pointing at this copy of mder.
     Registered,
     /// Registered, but pointing at another copy, for example one that moved.
+    #[cfg_attr(not(windows), allow(dead_code))]
     RegisteredElsewhere(String),
 }
 
@@ -56,6 +59,8 @@ pub fn status(kind: &FileKind, ext: &str) -> Status {
 }
 
 /// One change: register (`true`) or unregister (`false`) an extension.
+/// Only read where registering is supported.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub struct Change<'a> {
     pub kind: &'a FileKind,
     pub ext: &'a str,

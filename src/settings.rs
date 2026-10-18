@@ -1,8 +1,10 @@
 //! mder's settings, in `mder.ini`: one `key=value` per line.
 //!
 //! The file lives next to mder.exe, so mder stays portable. If that folder
-//! can't be written to, it goes in `%APPDATA%\mder` instead (on other
-//! systems, `$XDG_CONFIG_HOME/mder` or `~/.config/mder`).
+//! can't be written to, it goes in `%APPDATA%\mder` instead (on macOS,
+//! `~/Library/Application Support/mder`; elsewhere `$XDG_CONFIG_HOME/mder`
+//! or `~/.config/mder`). Inside a macOS app bundle, it never goes next to the
+//! program: that's part of the app, and writing there breaks its signature.
 
 use std::io;
 use std::path::PathBuf;
@@ -94,7 +96,10 @@ impl Settings {
 fn candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
-        out.push(exe.with_file_name(FILE_NAME));
+        let in_app_bundle = exe.to_string_lossy().contains(".app/Contents/MacOS/");
+        if !in_app_bundle {
+            out.push(exe.with_file_name(FILE_NAME));
+        }
     }
     if let Some(dir) = user_config_dir() {
         out.push(dir.join("mder").join(FILE_NAME));
@@ -105,6 +110,8 @@ fn candidates() -> Vec<PathBuf> {
 fn user_config_dir() -> Option<PathBuf> {
     if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library").join("Application Support"))
     } else {
         std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)

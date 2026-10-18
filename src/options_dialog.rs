@@ -5,6 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[cfg(windows)]
 use wxdragon::accessible::AccRole;
 use wxdragon::prelude::*;
 
@@ -28,13 +29,17 @@ pub fn show(parent: &Frame) {
     let page = Panel::builder(&notebook).build();
     let integration = IntegrationPage::new(&page, dialog);
     notebook.add_page(&page, "Integration", false, None);
-    // Name each page after its tab, as a property page, so screen readers
-    // say which page you're on, as they do in Windows' own dialogs.
+    // Name each page after its tab, so screen readers say which page you're
+    // on, as they do in Windows' own dialogs. The name works on Windows and
+    // macOS (a no-op on GTK); setting a role is Windows-only in wxDragon.
     for (panel, name) in [(&general_page, "General"), (&page, "Integration")] {
         panel.set_accessibility_label(name);
+        #[cfg(windows)]
         panel.set_accessibility_role(AccRole::PropertyPage);
     }
     sizer.add(&notebook, 1, SizerFlag::Expand | SizerFlag::All, 8);
+    #[cfg(not(windows))]
+    let tab_keys = switch_tabs_by_keyboard(&dialog, notebook);
 
     let ok = Button::builder(&dialog).with_id(ID_OK).with_label("OK").build();
     let cancel = Button::builder(&dialog).with_id(ID_CANCEL).with_label("Cancel").build();
@@ -67,8 +72,55 @@ pub fn show(parent: &Frame) {
 
     general.focus();
     dialog.show_modal();
+    #[cfg(not(windows))]
+    drop(tab_keys);
     integration.close();
     dialog.destroy();
+}
+
+/// What keeps the tab keys working until the dialog closes.
+#[cfg(target_os = "macos")]
+type TabKeys = Option<crate::macos::ControlTab>;
+#[cfg(not(any(windows, target_os = "macos")))]
+type TabKeys = ();
+
+/// Control+Tab and Control+Shift+Tab move to the next and previous tab, from
+/// anywhere in the dialog, then into that tab's first control. Windows' tab
+/// control does this itself; macOS's doesn't. On the Mac, Command+Shift+]
+/// and [ work too, as they do for tabs in Safari and Finder.
+#[cfg(not(windows))]
+fn switch_tabs_by_keyboard(dialog: &Dialog, notebook: Notebook) -> TabKeys {
+    let show_tab = move |forward: bool| {
+        notebook.advance_selection(forward);
+        if let Some(page) = usize::try_from(notebook.selection()).ok().and_then(|i| notebook.get_page(i)) {
+            page.set_focus();
+        }
+    };
+    dialog.on_char_hook(move |event| {
+        if let WindowEventData::Keyboard(ref key) = event {
+            // macOS turns Control+Tab into focus movement before the dialog
+            // sees it, so there it's caught earlier, below.
+            #[cfg(not(target_os = "macos"))]
+            let forward = match key.get_key_code() {
+                Some(wxdragon::keycode::WXK_TAB) if key.control_down() && !key.alt_down() => Some(!key.shift_down()),
+                _ => None,
+            };
+            // wxWidgets reports Command as "control" on macOS; cmd_down is Command.
+            #[cfg(target_os = "macos")]
+            let forward = match key.get_key_code() {
+                Some(0x5D | 0x7D) if key.cmd_down() && key.shift_down() => Some(true), // ] or }
+                Some(0x5B | 0x7B) if key.cmd_down() && key.shift_down() => Some(false), // [ or {
+                _ => None,
+            };
+            if let Some(forward) = forward {
+                show_tab(forward);
+                return;
+            }
+        }
+        event.skip(true);
+    });
+    #[cfg(target_os = "macos")]
+    return crate::macos::ControlTab::new(show_tab);
 }
 
 /// To avoid flicker, wxWidgets gives its tab control a private copy of the

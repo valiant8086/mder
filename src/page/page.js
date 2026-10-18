@@ -98,6 +98,7 @@ document.addEventListener("keydown", (e) => {
   const plain = !e.ctrlKey && !e.altKey && !e.shiftKey;
   if (e.key === "F6" && !e.ctrlKey && !e.altKey) { e.preventDefault(); post("switch"); }
   else if (e.key.toLowerCase() === "s" && e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); post("save"); }
+  else if (e.key === "," && e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); post("options"); }
   else if (e.key === "F10" && plain) { e.preventDefault(); post("menu:"); }
   // Alt plus a letter opens that menu. Ctrl+Alt is AltGr on some keyboards.
   else if (e.altKey && !e.ctrlKey && /^[a-z]$/i.test(e.key)) { e.preventDefault(); post("menu:" + e.key.toLowerCase()); }

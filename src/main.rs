@@ -4,6 +4,8 @@ mod args;
 mod instance;
 mod check_tree;
 mod integration;
+#[cfg(target_os = "macos")]
+mod macos;
 mod options_dialog;
 mod render;
 mod settings;
@@ -23,10 +25,13 @@ use instance::Claim;
 use settings::{Pane, Settings};
 
 const ID_SAVE: i32 = 1001;
-const ID_EXIT: i32 = 1002;
 const ID_SWITCH: i32 = 2001;
-const ID_ABOUT: i32 = 3001;
-const ID_OPTIONS: i32 = 4001;
+// Standard IDs: on macOS, wxWidgets moves these into the app menu, as About
+// mder, Quit mder, and Settings (Cmd+Comma). Elsewhere they stay where they are.
+const ID_EXIT: i32 = wxdragon::id::ID_EXIT;
+const ID_ABOUT: i32 = wxdragon::id::ID_ABOUT;
+/// wxWidgets' wxID_PREFERENCES, which wxDragon doesn't name.
+const ID_OPTIONS: i32 = 5022;
 
 const ABOUT: &str = concat!(
     "mder ",
@@ -41,7 +46,10 @@ const PAGE_JS: &str = include_str!("page/page.js");
 const PAGE_CSS: &str = include_str!("page/page.css");
 
 /// How often to look at the file on disk for outside changes.
-const DISK_POLL_MS: i32 = 1000;const SAMPLE: &str = "# Welcome to mder
+const DISK_POLL_MS: i32 = 1000;
+
+/// What a window opened with no file shows.
+const SAMPLE: &str = "# Welcome to mder
 
 Press F6 to switch between this editor and the rendered view.
 
@@ -456,6 +464,70 @@ fn js_string(s: &str) -> String {
     out
 }
 
+/// Opening files from Finder on macOS. macOS doesn't put the file on the
+/// command line: it sends the app an "open documents" event, which
+/// wxWidgets passes on straight after startup, or whenever one arrives
+/// while mder runs. A launch with no file gets a "new file" event instead.
+/// Each file still gets its own mder, as on the other systems.
+#[cfg(target_os = "macos")]
+mod finder {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use wxdragon::prelude::*;
+
+    use crate::args::Target;
+
+    /// Whether this process has built its window.
+    static HAS_WINDOW: AtomicBool = AtomicBool::new(false);
+
+    pub fn listen(app: wxdragon::app::App, has_window: bool) {
+        HAS_WINDOW.store(has_window, Ordering::SeqCst);
+        app.on_open_files(|files| {
+            crate::debug_log(&format!("macOS asked to open {files:?}"));
+            let mut files: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
+            // This process takes the first file if it has no window yet.
+            let mine = if !files.is_empty() && !HAS_WINDOW.swap(true, Ordering::SeqCst) {
+                Some(files.remove(0))
+            } else {
+                None
+            };
+            // Start the others first: opening a file that's already open
+            // elsewhere ends this process.
+            for file in &files {
+                open_separately(file);
+            }
+            if let Some(file) = mine {
+                crate::open_window(Some(file), Target::default());
+            }
+        });
+        app.on_new_file(|| {
+            if !HAS_WINDOW.swap(true, Ordering::SeqCst) {
+                crate::open_window(None, Target::default());
+            }
+        });
+    }
+
+    /// Starts another mder on `file`. That one hands it on if the file is
+    /// already open, as a second launch does anywhere.
+    fn open_separately(file: &Path) {
+        let Ok(exe) = std::env::current_exe() else { return };
+        // The program is mder.app/Contents/MacOS/mder. Opening the app with
+        // -n, rather than running the program, starts it as a proper app.
+        let bundle = exe.ancestors().nth(3).filter(|b| b.extension().is_some_and(|e| e == "app"));
+        let started = match bundle {
+            Some(bundle) => Command::new("open").arg("-n").arg(bundle).arg("--args").arg(file).spawn(),
+            None => Command::new(&exe).arg(file).spawn(),
+        };
+        match started {
+            // Collect it when it exits, so it doesn't linger as a zombie.
+            Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
+            Err(e) => crate::debug_log(&format!("couldn't start mder for {}: {e}", file.display())),
+        }
+    }
+}
+
 /// An update renames the running exe to `mder.exe.old` before putting the
 /// new one in place. Delete it once nothing is running it any more.
 fn remove_replaced_exe() {
@@ -490,256 +562,281 @@ fn main() {
         debug_log(&format!("started: {:?} {:?}", launch.path, launch.target));
     }
 
-    let _ = wxdragon::main(move |_| {
+    let _ = wxdragon::main(move |app| {
         if let Some(command) = launch.command {
             run_command(command);
         }
-        let targets: Rc<RefCell<VecDeque<Target>>> = Rc::default();
-
-        let claim = match &launch.path {
-            Some(path) => {
-                let queue = targets.clone();
-                let on_target = move |t: Target| {
-                    if let Some(log) = &t.log {
-                        start_logging(log);
-                    }
-                    debug_log(&format!("handed {t:?}"));
-                    queue.borrow_mut().push_back(t);
-                    wxdragon::app::wake_up_idle();
-                };
-                match instance::claim(path, &launch.target, on_target) {
-                    Some(Claim::HandedOff) => {
-                        debug_log("the file is already open; handed the target to that window");
-                        std::process::exit(0)
-                    }
-                    Some(Claim::Unreachable) => {
-                        debug_log("the file is already open, but that window didn't respond");
-                        std::process::exit(1)
-                    }
-                    other => other,
-                }
+        #[cfg(target_os = "macos")]
+        {
+            macos::disable_window_tabbing();
+            finder::listen(app, launch.path.is_some());
+            if launch.path.is_none() {
+                // macOS says straight after this which file to open, if any.
+                return;
             }
-            None => None,
-        };
-        // Opening a file always goes through go_to_target, which picks the
-        // pane from the settings. With no file, mder starts in the editor.
-        if launch.path.is_some() {
-            let mut target = launch.target.clone();
-            target.fresh = true;
-            targets.borrow_mut().push_back(target);
         }
+        #[cfg(not(target_os = "macos"))]
+        let _ = app;
+        open_window(launch.path, launch.target);
+    });
+}
 
-        let doc = Doc::open(launch.path.clone());
-        let frame = Frame::builder()
-            .with_title(&format!("{} - mder", doc.name()))
-            .with_size(Size::new(1200, 800))
-            .build();
-        wxdragon::app::set_top_window(&frame);
+/// Builds this process's window, on `path` or on no file. If another mder
+/// already has the file open, hands `target` to it and exits instead.
+fn open_window(path: Option<PathBuf>, target: Target) {
+    let targets: Rc<RefCell<VecDeque<Target>>> = Rc::default();
 
-        let file_menu = Menu::builder()
-            .append_item(ID_SAVE, "&Save\tCtrl+S", "Save the file")
-            .append_separator()
-            .append_item(ID_EXIT, "E&xit", "Close mder")
-            .build();
-        let view_menu = Menu::builder()
-            .append_item(ID_SWITCH, "&Switch pane\tF6", "Move between the editor and the rendered view")
-            .build();
-        let tools_menu = Menu::builder()
-            .append_item(ID_OPTIONS, "&Options...", "Settings, such as which file types offer mder in Open with")
-            .build();
-        let help_menu = Menu::builder()
-            .append_item(ID_ABOUT, "&About mder", "Version, credits and license")
-            .build();
-        frame.set_menu_bar(
-            MenuBar::builder()
-                .append(file_menu, "&File")
-                .append(view_menu, "&View")
-                .append(tools_menu, "&Tools")
-                .append(help_menu, "&Help")
-                .build(),
-        );
-        frame.create_status_bar(1, 0, -1, "status");
-
-        let splitter = SplitterWindow::builder(&frame)
-            .with_style(SplitterWindowStyle::LiveUpdate)
-            .build();
-        let editor = TextCtrl::builder(&splitter)
-            .with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::DontWrap | TextCtrlStyle::ProcessTab)
-            .build();
-        let backend = if WebView::is_backend_available(WebViewBackend::Edge) {
-            WebViewBackend::Edge
-        } else {
-            WebViewBackend::Default
-        };
-        let view = WebView::builder(&splitter).with_backend(backend).build();
-        view.enable_context_menu(false);
-        view.add_script_message_handler("mder");
-        splitter.split_vertically(&editor, &view, 560);
-        splitter.set_minimum_pane_size(100);
-
-        editor.set_value(&doc.saved);
-        editor.set_insertion_point(0);
-        view.set_page(&page(&render::to_html(&doc.saved)), "about:blank");
-
-        let app = Rc::new(RefCell::new(App {
-            frame,
-            editor,
-            view,
-            doc,
-            last_switch: Instant::now() - Duration::from_secs(1),
-            page_loaded: false,
-            targets,
-            _claim: claim,
-            timers: Vec::new(),
-            active: true,
-            waiting_for_active: false,
-            focus_timer: None,
-            pane_when_inactive: Pane::Editor,
-        }));
-
-        // Re-render shortly after typing stops.
-        let render_timer = Rc::new(Timer::new(&frame));
-        {
-            let app = app.clone();
-            render_timer.on_tick(move |_| with_app(&app, |app| app.update_render()));
+    let claim = match &path {
+        Some(path) => {
+            let queue = targets.clone();
+            let on_target = move |t: Target| {
+                if let Some(log) = &t.log {
+                    start_logging(log);
+                }
+                debug_log(&format!("handed {t:?}"));
+                queue.borrow_mut().push_back(t);
+                wxdragon::app::wake_up_idle();
+            };
+            match instance::claim(path, &target, on_target) {
+                Some(Claim::HandedOff) => {
+                    debug_log("the file is already open; handed the target to that window");
+                    std::process::exit(0)
+                }
+                Some(Claim::Unreachable) => {
+                    debug_log("the file is already open, but that window didn't respond");
+                    std::process::exit(1)
+                }
+                other => other,
+            }
         }
-        {
-            let render_timer = render_timer.clone();
-            editor.on_text_updated(move |_| {
-                render_timer.start(300, true);
-            });
-        }
+        None => None,
+    };
+    // Opening a file always goes through go_to_target, which picks the
+    // pane from the settings. With no file, mder starts in the editor.
+    if path.is_some() {
+        let mut target = target.clone();
+        target.fresh = true;
+        targets.borrow_mut().push_back(target);
+    }
 
-        // Watch the file, and catch any handed-over targets the idle event missed.
-        let disk_timer = Timer::new(&frame);
-        {
-            let app = app.clone();
-            disk_timer.on_tick(move |_| {
+    let doc = Doc::open(path.clone());
+    let frame = Frame::builder()
+        .with_title(&format!("{} - mder", doc.name()))
+        .with_size(Size::new(1200, 800))
+        .build();
+    wxdragon::app::set_top_window(&frame);
+
+    // Ctrl+Comma for Options everywhere; on macOS, wxWidgets makes it
+    // Command+Comma and moves the item into the app menu as Settings.
+    const OPTIONS_LABEL: &str = "&Options...\tCtrl+,";
+    const OPTIONS_HELP: &str = "Settings, such as which file types offer mder in Open with";
+    let file_menu = Menu::builder()
+        .append_item(ID_SAVE, "&Save\tCtrl+S", "Save the file")
+        .append_separator()
+        .append_item(ID_EXIT, "E&xit", "Close mder")
+        .build();
+    let view_menu = Menu::builder()
+        .append_item(ID_SWITCH, "&Switch pane\tF6", "Move between the editor and the rendered view")
+        .build();
+    let help_menu = Menu::builder()
+        .append_item(ID_ABOUT, "&About mder", "Version, credits and license")
+        .build();
+    // On macOS, Options goes in a menu only for wxWidgets to move it to
+    // the app menu; a Tools menu would be left empty, so there isn't one.
+    #[cfg(target_os = "macos")]
+    file_menu.append(ID_OPTIONS, OPTIONS_LABEL, OPTIONS_HELP, ItemKind::Normal);
+    let menu_bar = MenuBar::builder().append(file_menu, "&File").append(view_menu, "&View");
+    #[cfg(not(target_os = "macos"))]
+    let menu_bar = menu_bar.append(Menu::builder().append_item(ID_OPTIONS, OPTIONS_LABEL, OPTIONS_HELP).build(), "&Tools");
+    frame.set_menu_bar(menu_bar.append(help_menu, "&Help").build());
+    frame.create_status_bar(1, 0, -1, "status");
+
+    let splitter = SplitterWindow::builder(&frame)
+        .with_style(SplitterWindowStyle::LiveUpdate)
+        .build();
+    let editor = TextCtrl::builder(&splitter)
+        .with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::DontWrap | TextCtrlStyle::ProcessTab)
+        .build();
+    let backend = if WebView::is_backend_available(WebViewBackend::Edge) {
+        WebViewBackend::Edge
+    } else {
+        WebViewBackend::Default
+    };
+    let view = WebView::builder(&splitter).with_backend(backend).build();
+    view.enable_context_menu(false);
+    view.add_script_message_handler("mder");
+    splitter.split_vertically(&editor, &view, 560);
+    splitter.set_minimum_pane_size(100);
+
+    editor.set_value(&doc.saved);
+    editor.set_insertion_point(0);
+    view.set_page(&page(&render::to_html(&doc.saved)), "about:blank");
+
+    let app = Rc::new(RefCell::new(App {
+        frame,
+        editor,
+        view,
+        doc,
+        last_switch: Instant::now() - Duration::from_secs(1),
+        page_loaded: false,
+        targets,
+        _claim: claim,
+        timers: Vec::new(),
+        active: true,
+        waiting_for_active: false,
+        focus_timer: None,
+        pane_when_inactive: Pane::Editor,
+    }));
+
+    // Re-render shortly after typing stops.
+    let render_timer = Rc::new(Timer::new(&frame));
+    {
+        let app = app.clone();
+        render_timer.on_tick(move |_| with_app(&app, |app| app.update_render()));
+    }
+    {
+        let render_timer = render_timer.clone();
+        editor.on_text_updated(move |_| {
+            render_timer.start(300, true);
+        });
+    }
+
+    // Watch the file, and catch any handed-over targets the idle event missed.
+    let disk_timer = Timer::new(&frame);
+    {
+        let app = app.clone();
+        disk_timer.on_tick(move |_| {
+            with_app(&app, |app| {
+                app.check_disk();
+                app.run_targets();
+            })
+        });
+    }
+    disk_timer.start(DISK_POLL_MS, false);
+    app.borrow_mut().timers.push(disk_timer);
+
+    // A jump moves NVDA once the window is active; this covers the case
+    // where the activate event never comes.
+    let focus_timer = Timer::new(&frame);
+    {
+        let app = app.clone();
+        focus_timer.on_tick(move |_| {
+            with_app(&app, |app| {
+                if app.waiting_for_active {
+                    app.when_active();
+                }
+            })
+        });
+    }
+    app.borrow_mut().focus_timer = Some(focus_timer);
+    {
+        let app = app.clone();
+        frame.on_activate(move |event| {
+            if let WindowEventData::Activate(ref a) = event {
+                let active = a.is_active();
                 with_app(&app, |app| {
-                    app.check_disk();
-                    app.run_targets();
-                })
-            });
-        }
-        disk_timer.start(DISK_POLL_MS, false);
-        app.borrow_mut().timers.push(disk_timer);
-
-        // A jump moves NVDA once the window is active; this covers the case
-        // where the activate event never comes.
-        let focus_timer = Timer::new(&frame);
-        {
-            let app = app.clone();
-            focus_timer.on_tick(move |_| {
-                with_app(&app, |app| {
-                    if app.waiting_for_active {
+                    if !active {
+                        // Focus is still where you left it at this point.
+                        app.pane_when_inactive = if app.editor.has_focus() { Pane::Editor } else { Pane::View };
+                    }
+                    app.active = active;
+                    debug_log(&format!("window active: {active}"));
+                    if active && app.waiting_for_active {
                         app.when_active();
                     }
-                })
-            });
-        }
-        app.borrow_mut().focus_timer = Some(focus_timer);
-        {
-            let app = app.clone();
-            frame.on_activate(move |event| {
-                if let WindowEventData::Activate(ref a) = event {
-                    let active = a.is_active();
-                    with_app(&app, |app| {
-                        if !active {
-                            // Focus is still where you left it at this point.
-                            app.pane_when_inactive = if app.editor.has_focus() { Pane::Editor } else { Pane::View };
-                        }
-                        app.active = active;
-                        debug_log(&format!("window active: {active}"));
-                        if active && app.waiting_for_active {
-                            app.when_active();
-                        }
-                    });
-                }
-                // wxWidgets restores focus to the last focused control.
-                event.skip(true);
-            });
-        }
-
-        {
-            let app = app.clone();
-            frame.on_idle(move |event| {
-                with_app(&app, |app| app.run_targets());
-                event.skip(true);
-            });
-        }
-
-        {
-            let app = app.clone();
-            view.on_loaded(move |_| {
-                with_app(&app, |app| {
-                    app.page_loaded = true;
-                    let focused = app.view.run_script(
-                        "document.activeElement && document.activeElement !== document.body ? document.activeElement.textContent.slice(0, 40) : 'nothing'",
-                    );
-                    debug_log(&format!("page loaded, focused: {focused:?}"));
-                    app.run_targets();
-                })
-            });
-        }
-
-        {
-            let app = app.clone();
-            view.on_script_message_received(move |e| {
-                let msg = e.get_string().unwrap_or_default();
-                with_app(&app, |app| {
-                    if msg == "switch" {
-                        app.switch();
-                    } else if msg == "save" {
-                        app.save();
-                    } else if let Some(key) = msg.strip_prefix("menu:") {
-                        app.open_menu(key.chars().next());
-                    } else if let Some(line) = msg.strip_prefix("goto:").and_then(|l| l.parse().ok()) {
-                        app.go_to_editor(Some(line));
-                    }
                 });
-            });
-        }
+            }
+            // wxWidgets restores focus to the last focused control.
+            event.skip(true);
+        });
+    }
 
-        {
-            let app = app.clone();
-            frame.on_char_hook(move |event| {
-                if let WindowEventData::Keyboard(ref key) = event {
-                    if key.get_key_code() == Some(wxdragon::keycode::WXK_F6)
-                        && !key.control_down()
-                        && !key.alt_down()
-                    {
-                        with_app(&app, |app| app.switch());
-                        return;
-                    }
+    {
+        let app = app.clone();
+        frame.on_idle(move |event| {
+            with_app(&app, |app| app.run_targets());
+            event.skip(true);
+        });
+    }
+
+    {
+        let app = app.clone();
+        view.on_loaded(move |_| {
+            with_app(&app, |app| {
+                app.page_loaded = true;
+                let focused = app.view.run_script(
+                    "document.activeElement && document.activeElement !== document.body ? document.activeElement.textContent.slice(0, 40) : 'nothing'",
+                );
+                debug_log(&format!("page loaded, focused: {focused:?}"));
+                app.run_targets();
+            })
+        });
+    }
+
+    {
+        let app = app.clone();
+        view.on_script_message_received(move |e| {
+            let msg = e.get_string().unwrap_or_default();
+            if msg == "options" {
+                // Outside with_app: the dialog's own event loop runs
+                // mder's timers, which need the app.
+                let frame = app.borrow().frame;
+                options_dialog::show(&frame);
+                return;
+            }
+            with_app(&app, |app| {
+                if msg == "switch" {
+                    app.switch();
+                } else if msg == "save" {
+                    app.save();
+                } else if let Some(key) = msg.strip_prefix("menu:") {
+                    app.open_menu(key.chars().next());
+                } else if let Some(line) = msg.strip_prefix("goto:").and_then(|l| l.parse().ok()) {
+                    app.go_to_editor(Some(line));
                 }
-                event.skip(true);
             });
-        }
+        });
+    }
 
-        {
-            let app = app.clone();
-            frame.on_menu(move |e| match e.get_id() {
-                ID_SAVE => with_app(&app, |app| app.save()),
-                ID_EXIT => with_app(&app, |app| app.frame.close(true)),
-                ID_SWITCH => with_app(&app, |app| app.switch()),
-                ID_OPTIONS => {
-                    // Not inside with_app: the dialog's own event loop runs
-                    // mder's timers, which need the app.
-                    let frame = app.borrow().frame;
-                    options_dialog::show(&frame);
+    {
+        let app = app.clone();
+        frame.on_char_hook(move |event| {
+            if let WindowEventData::Keyboard(ref key) = event {
+                if key.get_key_code() == Some(wxdragon::keycode::WXK_F6)
+                    && !key.control_down()
+                    && !key.alt_down()
+                {
+                    with_app(&app, |app| app.switch());
+                    return;
                 }
-                ID_ABOUT => with_app(&app, |app| {
-                    MessageDialog::builder(&app.frame, ABOUT, "About mder")
-                        .with_style(MessageDialogStyle::OK | MessageDialogStyle::IconInformation)
-                        .build()
-                        .show_modal();
-                }),
-                _ => e.skip(true),
-            });
-        }
+            }
+            event.skip(true);
+        });
+    }
 
-        frame.show(true);
-        frame.centre();
-        editor.set_focus();
-    });
+    {
+        let app = app.clone();
+        frame.on_menu(move |e| match e.get_id() {
+            ID_SAVE => with_app(&app, |app| app.save()),
+            ID_EXIT => with_app(&app, |app| app.frame.close(true)),
+            ID_SWITCH => with_app(&app, |app| app.switch()),
+            ID_OPTIONS => {
+                // Not inside with_app: the dialog's own event loop runs
+                // mder's timers, which need the app.
+                let frame = app.borrow().frame;
+                options_dialog::show(&frame);
+            }
+            ID_ABOUT => with_app(&app, |app| {
+                MessageDialog::builder(&app.frame, ABOUT, "About mder")
+                    .with_style(MessageDialogStyle::OK | MessageDialogStyle::IconInformation)
+                    .build()
+                    .show_modal();
+            }),
+            _ => e.skip(true),
+        });
+    }
+
+    frame.show(true);
+    frame.centre();
+    editor.set_focus();
 }
