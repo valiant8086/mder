@@ -21,6 +21,8 @@ Download the zip from the [releases page](https://github.com/valiant8086/mder/re
 
 To offer mder when you open markdown files from Explorer, use Tools, Options, or run `mder --register` once. See [Open with](#open-with) below.
 
+On a Mac, download the macOS zip, which runs on both Apple silicon and Intel Macs, and unzip it. Move mder.app where you want to keep it, such as Applications, before opening it. mder isn't signed by Apple, so the first time you open it, macOS refuses: go to System Settings, Privacy & Security, and choose "Open Anyway". After that it opens normally. It needs macOS 12 or later.
+
 ## Command line
 
 ```

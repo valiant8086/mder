@@ -3,8 +3,13 @@
 # its own menu bar, coming to the front properly, and offering mder for
 # markdown files in Finder's Open With menu.
 #
-#   scripts/macos-app.sh            # release build: target/release/mder.app
-#   scripts/macos-app.sh --debug    # debug build: target/debug/mder.app
+#   scripts/macos-app.sh                    # release build: target/release/mder.app
+#   scripts/macos-app.sh --debug            # debug build: target/debug/mder.app
+#   scripts/macos-app.sh --universal        # Apple silicon and Intel in one app:
+#                                           #   target/universal/release/mder.app
+#   scripts/macos-app.sh --universal --zip  # and packs it into dist/ for a release
+#
+# --universal needs Rust's targets for both: rustup target add aarch64-apple-darwin x86_64-apple-darwin
 #
 # Open it with: open target/release/mder.app --args path/to/file.md
 set -eu
@@ -12,19 +17,41 @@ set -eu
 cd "$(dirname "$0")/.."
 
 profile=release
-cargo_flags=--release
-if [ "${1:-}" = "--debug" ]; then
-    profile=debug
-    cargo_flags=
+universal=no
+zip=no
+for arg in "$@"; do
+    case "$arg" in
+        --debug) profile=debug ;;
+        --universal) universal=yes ;;
+        --zip) zip=yes ;;
+        *) echo "Unknown option: $arg" >&2; exit 2 ;;
+    esac
+done
+cargo_flags=
+if [ "$profile" = release ]; then
+    cargo_flags=--release
 fi
 
-cargo build $cargo_flags
+if [ "$universal" = yes ]; then
+    out="target/universal/$profile"
+    for target in aarch64-apple-darwin x86_64-apple-darwin; do
+        cargo build $cargo_flags --target "$target"
+    done
+    mkdir -p "$out"
+    lipo -create -output "$out/mder" \
+        "target/aarch64-apple-darwin/$profile/mder" "target/x86_64-apple-darwin/$profile/mder"
+    arch_name=universal
+else
+    cargo build $cargo_flags
+    out="target/$profile"
+    arch_name=$(uname -m)
+fi
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-app="target/$profile/mder.app"
+app="$out/mder.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "target/$profile/mder" "$app/Contents/MacOS/mder"
+cp "$out/mder" "$app/Contents/MacOS/mder"
 cp README.md LICENSE-MIT.txt LICENSE-APACHE.txt NOTICE.txt "$app/Contents/Resources/"
 
 # The markdown extensions here should match KINDS in src/integration/mod.rs.
@@ -73,11 +100,22 @@ PLIST
 # bundle and its program don't match.
 codesign --force --deep --sign - "$app"
 
-# Tell Launch Services about it, so Open With can offer it.
+# Tell Launch Services about it, so Open With can offer it. Not for a
+# release zip: a second registered copy here could change which one opens.
 lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-if [ -x "$lsregister" ]; then
+if [ "$zip" = no ] && [ -x "$lsregister" ]; then
     "$lsregister" -f "$app"
 fi
 
 echo "Built $app"
+
+if [ "$zip" = yes ]; then
+    mkdir -p dist
+    zip_path="dist/mder-$version-macos-$arch_name.zip"
+    rm -f "$zip_path"
+    # ditto keeps the bundle intact, as Finder's own Compress does.
+    ditto -c -k --keepParent "$app" "$zip_path"
+    echo "Packed $zip_path"
+fi
+
 echo "Open it with: open $app --args path/to/file.md"

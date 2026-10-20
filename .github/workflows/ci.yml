@@ -17,3 +17,28 @@ jobs:
         run: if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja -y }
       - run: cargo test
       - run: cargo build --release
+
+  # An Apple silicon machine builds both halves of the app, and joins them
+  # into one that runs on both. The Intel half runs under Rosetta here.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Make sure CMake and Ninja are available
+        run: |
+          command -v cmake || brew install cmake
+          command -v ninja || brew install ninja
+      - name: Install Rosetta, to run Intel code
+        run: sudo softwareupdate --install-rosetta --agree-to-license
+      - run: cargo test
+      - name: Test the Intel build, under Rosetta
+        run: cargo test --target x86_64-apple-darwin
+      - run: scripts/macos-app.sh --universal
+      - name: Start each half of the app
+        run: |
+          scripts/macos-smoke-test.sh target/universal/release/mder.app/Contents/MacOS/mder arm64
+          scripts/macos-smoke-test.sh target/universal/release/mder.app/Contents/MacOS/mder x86_64
