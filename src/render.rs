@@ -4,6 +4,9 @@
 //! block reports its line to the editor, and the editor asks the page to
 //! focus the block for the caret's line.
 //!
+//! Headings also get GitHub-style anchors as their `id`, for links within the
+//! document, the same ones `--anchor` takes.
+//!
 //! The leading text of a list item is wrapped in `<span class="li-text">`.
 //! The page focuses that span instead of the `<li>`: a focusable list item
 //! makes NVDA switch to focus mode.
@@ -13,6 +16,8 @@ use pulldown_cmark::{CowStr, Event, Options, Parser, Tag, TagEnd, html};
 pub fn to_html(source: &str) -> String {
     let lines = LineIndex::new(source);
     let parser = Parser::new_ext(source, options()).into_offset_iter();
+    // Each heading's anchor, in order, for links within the document.
+    let mut anchors = heading_anchors(source).into_iter().map(|(_, anchor)| anchor);
 
     // One entry per open list item: is its leading-text span open?
     let mut items: Vec<ItemSpan> = Vec::new();
@@ -41,7 +46,9 @@ pub fn to_html(source: &str) -> String {
             Event::Start(Tag::Paragraph) => events.push(raw(format!("<p data-line=\"{line}\">"))),
             Event::End(TagEnd::Paragraph) => events.push(raw("</p>\n")),
             Event::Start(Tag::Heading { level, .. }) => {
-                events.push(raw(format!("<{level} data-line=\"{line}\">")));
+                // Anchors only hold letters, digits, hyphens and underscores.
+                let id = anchors.next().unwrap_or_default();
+                events.push(raw(format!("<{level} data-line=\"{line}\" id=\"{id}\">")));
             }
             Event::End(TagEnd::Heading(level)) => events.push(raw(format!("</{level}>\n"))),
             Event::Start(Tag::BlockQuote(_)) => {
@@ -129,8 +136,15 @@ fn starts_block(event: &Event) -> bool {
 /// The line of the heading whose GitHub-style anchor is `anchor`.
 pub fn heading_line(source: &str, anchor: &str) -> Option<usize> {
     let anchor = anchor.trim_start_matches('#').to_lowercase();
+    heading_anchors(source).into_iter().find(|(_, a)| *a == anchor).map(|(line, _)| line)
+}
+
+/// Every heading's line and GitHub-style anchor, in order. A repeated
+/// heading gets -1, -2 and so on, as on GitHub.
+fn heading_anchors(source: &str) -> Vec<(usize, String)> {
     let lines = LineIndex::new(source);
     let mut seen: Vec<String> = Vec::new();
+    let mut anchors = Vec::new();
     let mut current: Option<(usize, String)> = None;
 
     for (event, range) in Parser::new_ext(source, options()).into_offset_iter() {
@@ -147,14 +161,12 @@ pub fn heading_line(source: &str, anchor: &str) -> Option<usize> {
                 let n = seen.iter().filter(|s| **s == base).count();
                 let unique = if n == 0 { base.clone() } else { format!("{base}-{n}") };
                 seen.push(base);
-                if unique == anchor {
-                    return Some(line);
-                }
+                anchors.push((line, unique));
             }
             _ => {}
         }
     }
-    None
+    anchors
 }
 
 /// GitHub's heading anchor: lowercase, punctuation dropped, spaces to hyphens.
@@ -194,7 +206,7 @@ mod tests {
     #[test]
     fn blocks_carry_their_line() {
         let html = to_html("# Title\n\nSome text.\n\n- one\n- two\n");
-        assert!(html.contains("<h1 data-line=\"1\">Title</h1>"), "{html}");
+        assert!(html.contains("<h1 data-line=\"1\" id=\"title\">Title</h1>"), "{html}");
         assert!(html.contains("<p data-line=\"3\">Some text.</p>"), "{html}");
         assert!(html.contains("<li data-line=\"6\"><span class=\"li-text\">two</span></li>"), "{html}");
     }
@@ -221,6 +233,14 @@ mod tests {
         assert_eq!(heading_line(src, "setup--use-1"), Some(7));
         assert_eq!(heading_line(src, "code-here"), Some(9));
         assert_eq!(heading_line(src, "missing"), None);
+    }
+
+    #[test]
+    fn headings_carry_their_anchors() {
+        let html = to_html("# Intro\n\n## Setup & Use\n\n## Setup & Use\n\n[back](#intro)\n");
+        assert!(html.contains("<h1 data-line=\"1\" id=\"intro\">"), "{html}");
+        assert!(html.contains("<h2 data-line=\"3\" id=\"setup--use\">"), "{html}");
+        assert!(html.contains("<h2 data-line=\"5\" id=\"setup--use-1\">"), "{html}");
     }
 
     #[test]

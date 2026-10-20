@@ -187,8 +187,29 @@ impl App {
     }
 
     fn go_to_render(&mut self) {
-        self.view.set_focus();
+        self.focus_view();
         self.focus_render_block();
+    }
+
+    /// Puts keyboard focus in the rendered view. On GTK, wxWidgets wraps
+    /// WebKit's view in a scrolled window and focuses that instead, so keys
+    /// never reach the page, and Orca doesn't treat it as web content. So
+    /// there, focus WebKit's own view, and only that: going through the
+    /// wrapper first makes Orca say "scroll pane".
+    fn focus_view(&self) {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            #[link(name = "gtk-3")]
+            unsafe extern "C" {
+                fn gtk_widget_grab_focus(widget: *mut std::ffi::c_void);
+            }
+            let web_view = self.view.get_native_backend();
+            if !web_view.is_null() {
+                unsafe { gtk_widget_grab_focus(web_view) };
+                return;
+            }
+        }
+        self.view.set_focus();
     }
 
     /// Focuses the block for the caret's line inside the page. The page
@@ -202,6 +223,7 @@ impl App {
     }
 
     fn go_to_editor(&mut self, line: Option<i64>) {
+        debug_log(&format!("to the editor, line {line:?}"));
         if let Some(line) = line {
             self.set_caret_line(line);
         }
@@ -221,6 +243,23 @@ impl App {
         } else {
             self.go_to_editor(None);
         }
+    }
+
+    /// F6 pressed in the rendered view. With Orca, the page's caret follows
+    /// where you're reading, so the editor goes there, as Enter would. NVDA
+    /// and VoiceOver keep their reading place to themselves, so elsewhere
+    /// the editor stays where you left it.
+    fn switch_from_view(&mut self, caret: Option<i64>) {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if let Some(line) = caret {
+            if !self.editor.has_focus() && Instant::now().duration_since(self.last_switch) >= Duration::from_millis(300) {
+                self.last_switch = Instant::now();
+                self.go_to_editor(Some(line));
+                return;
+            }
+        }
+        let _ = caret;
+        self.switch();
     }
 
     fn update_render(&self) {
@@ -344,14 +383,14 @@ impl App {
                 self.last_switch = Instant::now();
                 #[cfg(target_os = "macos")]
                 self.bring_forward_then(|app| {
-                    app.view.set_focus();
+                    app.focus_view();
                     if move_reader {
                         app.focus_render_block();
                     }
                 });
                 #[cfg(not(target_os = "macos"))]
                 self.bring_forward_then(|app| {
-                    app.view.set_focus();
+                    app.focus_view();
                     if move_reader {
                         app.move_reader_when_active();
                     }
@@ -813,8 +852,12 @@ fn open_window(path: Option<PathBuf>, target: Target) {
                 return;
             }
             with_app(&app, |app| {
-                if msg == "switch" {
-                    app.switch();
+                if let Some(caret) = msg.strip_prefix("switch:") {
+                    // F6 in the rendered view, with the line the page's caret
+                    // is on, if any.
+                    let caret: Option<i64> = caret.parse().ok();
+                    debug_log(&format!("F6 in the rendered view; the page's caret is on line {caret:?}"));
+                    app.switch_from_view(caret);
                 } else if msg == "save" {
                     app.save();
                 } else if let Some(key) = msg.strip_prefix("menu:") {

@@ -8,10 +8,12 @@ The window has two panes: a plain text editor for the markdown source, and a ren
   - Going to the rendered view puts the screen reader on the block for the editor's caret line.
   - Going back to the editor doesn't move the editor's caret. To move the caret to where you are in the rendered view, press Enter there instead.
   - So if you read ahead in the rendered view and press F6, the editor is still where you left it, and the next F6 takes you to the editor's line in the rendered view, not to where you were reading. Something to be mindful of.
+  - On Linux with Orca, F6 from the rendered view does take the editor to where you're reading, because Orca lets the page know. See below.
 - Enter on a block in the rendered view takes you to that line in the editor. Clicking a block with the mouse does the same.
+- Links in the rendered view only work within the document, such as links to headings. Links to websites and other files don't open anything yet.
 - The rendered view updates as you type, patching only what changed so the screen reader keeps its place.
 
-So to keep both positions in step while running a screen reader, use F6 to go from the editor to the rendered view, and Enter to go from the rendered view to the editor. It works this way because a web page can't tell where a screen reader is reading. Screen readers read web pages from their own copy of the content, so moving around doesn't touch the page itself. Pressing Enter makes the screen reader click the block you're on, which the page can see, so that's the solution. How the syncing works, and what we learned about NVDA in web views along the way, is in [docs/nvda-findings.md](docs/nvda-findings.md).
+So to keep both positions in step while running a screen reader, use F6 to go from the editor to the rendered view, and Enter to go from the rendered view to the editor. It works this way because a web page can't tell where a screen reader is reading. Screen readers read web pages from their own copy of the content, so moving around doesn't touch the page itself. Pressing Enter makes the screen reader click the block you're on, which the page can see, so that's the solution. Orca is the exception: it moves the page's text cursor as you read, so with Orca, F6 keeps both positions in step both ways. How the syncing works, and what we learned about NVDA in web views along the way, is in [docs/nvda-findings.md](docs/nvda-findings.md).
 
 Also, if another program changes the file, mder reloads it. With unsaved edits, it asks first.
 
@@ -103,7 +105,13 @@ That builds mder and wraps it into `target/release/mder.app`, signed for this Ma
 
 ### Linux
 
-mder is built on wxWidgets, which also runs on Linux with WebKitGTK, so it should build there. Nobody has tried yet, and Open with isn't supported there so far. Reports and fixes are welcome.
+Tested on Debian 13 with the MATE desktop and Orca. You need Rust and these packages (Debian and Ubuntu names):
+
+```
+build-essential cmake ninja-build pkg-config libclang-dev libgtk-3-dev libwebkit2gtk-4.1-dev libssl-dev libpng-dev libjpeg-dev libtiff-dev libexpat1-dev libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev
+```
+
+Then `cargo build --release`, and run `target/release/mder`. The first build takes a few minutes while it builds wxWidgets. Open with isn't supported on Linux yet.
 
 ## License
 

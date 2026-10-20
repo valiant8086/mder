@@ -40,8 +40,10 @@ pub fn show(parent: &Frame) {
         panel.set_accessibility_role(AccRole::PropertyPage);
     }
     sizer.add(&notebook, 1, SizerFlag::Expand | SizerFlag::All, 8);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     let tab_keys = switch_tabs_by_keyboard(&dialog, notebook);
+    #[cfg(not(any(windows, target_os = "macos")))]
+    switch_tabs_by_keyboard(&dialog, notebook);
 
     let ok = Button::builder(&dialog).with_id(ID_OK).with_label("OK").build();
     let cancel = Button::builder(&dialog).with_id(ID_CANCEL).with_label("Cancel").build();
@@ -74,7 +76,7 @@ pub fn show(parent: &Frame) {
 
     general.focus();
     dialog.show_modal();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     drop(tab_keys);
     integration.close();
     dialog.destroy();
