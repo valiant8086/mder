@@ -41,6 +41,14 @@ Each file opens in one window. Running mder again for a file that's already open
 
 This makes mder easy to drive from another program or AI coding agent. For example, after changing a file, Claude could run `mder --find "the changed text" file.md` to show you the exact context in the rendered view. Just pressing enter is all it takes to then make your own edits.
 
+On macOS, launch it through `open`, so it starts as an app and can come to the front, and pass full paths:
+
+```
+open -n /path/to/mder.app --args --find "the changed text" /path/to/file.md
+```
+
+`-n` starts a new copy each time, which hands the location to the window that has the file, as on Windows. Opening files from Finder works without any of this.
+
 ### Which pane a file opens in
 
 Tools, Options, on the General tab, has two settings, both set to the rendered view at first:
@@ -50,7 +58,7 @@ Tools, Options, on the General tab, has two settings, both set to the rendered v
 
 `--edit` or `--view` overrides both for that launch. A file that's already open stays in whichever pane you're in, and moves to the location there, unless `--edit` or `--view` says otherwise. With no file, mder starts in the editor.
 
-Settings are saved in `mder.ini`, next to mder.exe, so mder stays portable. If that folder can't be written to, they go in `%APPDATA%\mder` instead.
+Settings are saved in `mder.ini`, next to mder.exe, so mder stays portable. If that folder can't be written to, they go in `%APPDATA%\mder` instead. On macOS, Settings is in the mder menu (Command+Comma), and the file is in `~/Library/Application Support/mder`.
 
 ### Debug log
 
@@ -67,6 +75,8 @@ On Windows, registering adds mder to the list in the "How do you want to open th
 
 Registering writes to your user's part of the registry, so it needs no admin rights. It records where mder is, so if you move mder, register it again from its new place. Tools, Options shows any type still pointing at the old copy, and checking it moves it to this one.
 
+On macOS, mder.app is always in Finder's Open With menu for markdown files. The Integration tab in Settings instead chooses which types open in mder when you double-click them. Checking one makes mder the default and remembers the app it replaced; unchecking gives the type back to that app, or asks which app to use. macOS asks you to confirm each change.
+
 ## Building
 
 You need Rust, and on Windows the Visual Studio C++ build tools with CMake and Ninja (both come with Visual Studio's C++ workload). wxDragon downloads prebuilt wxWidgets on the first build.
@@ -79,9 +89,19 @@ cargo build --release
 
 Pushing a tag like `v0.1.0` makes GitHub build and publish a release.
 
-### Other platforms
+### macOS
 
-mder is built on wxWidgets, which also runs on Linux (with WebKitGTK) and macOS, so it should build there. Nobody has tried yet, and registering for Open with is Windows only so far. Reports and fixes are welcome.
+You need Rust, Apple's command line tools, and CMake and Ninja (from Homebrew, for example). wxDragon builds wxWidgets on the first build. Then:
+
+```
+scripts/macos-app.sh
+```
+
+That builds mder and wraps it into `target/release/mder.app`, signed for this Mac only, and tells macOS about it. Add `--debug` for a debug build. mder.app needs macOS 12 or later.
+
+### Linux
+
+mder is built on wxWidgets, which also runs on Linux with WebKitGTK, so it should build there. Nobody has tried yet, and Open with isn't supported there so far. Reports and fixes are welcome.
 
 ## License
 

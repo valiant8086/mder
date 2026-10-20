@@ -15,11 +15,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use super::{Change, Confirmation, FileKind, Item, Status};
-use crate::macos::{Id, class, global_block, ns_string, rust_string, send0, send1, send3};
+use crate::macos::{BUNDLE_ID, Id, class, global_block, ns_string, rust_string, send0, send1, send3};
 use crate::settings::Settings;
-
-/// mder.app's bundle identifier, set in scripts/macos-app.sh.
-const BUNDLE_ID: &str = "com.valiant8086.mder";
 
 /// How long to wait for macOS to confirm a change before letting the dialog
 /// carry on. macOS may ask you first, in its own dialog, so it can take as

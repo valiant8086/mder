@@ -55,6 +55,13 @@ pub unsafe fn send3<A, B, C, R>(receiver: Id, selector: &CStr, a: A, b: B, c: C)
     }
 }
 
+pub unsafe fn send4<A, B, C, D, R>(receiver: Id, selector: &CStr, a: A, b: B, c: C, d: D) -> R {
+    unsafe {
+        let f: unsafe extern "C" fn(Id, Id, A, B, C, D) -> R = std::mem::transmute(objc_msgSend as *const ());
+        f(receiver, sel_registerName(selector.as_ptr()), a, b, c, d)
+    }
+}
+
 /// An NSString. Autoreleased, so only good until the event loop runs on.
 pub fn ns_string(s: &str) -> Id {
     let Ok(s) = CString::new(s) else { return std::ptr::null_mut() };
@@ -68,6 +75,94 @@ pub fn rust_string(ns: Id) -> Option<String> {
     }
     let text: *const c_char = unsafe { send0(ns, c"UTF8String") };
     (!text.is_null()).then(|| unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned())
+}
+
+/// mder.app's bundle identifier, set in scripts/macos-app.sh.
+pub const BUNDLE_ID: &str = "com.valiant8086.mder";
+
+fn ns_app() -> Id {
+    unsafe { send0(class(c"NSApplication"), c"sharedApplication") }
+}
+
+fn responds_to(object: Id, selector: &CStr) -> bool {
+    !object.is_null() && unsafe { send1::<Id, bool>(object, c"respondsToSelector:", sel_registerName(selector.as_ptr())) }
+}
+
+/// Brings mder in front of other apps. Since macOS 14, that only works if
+/// the active app has let it: see `yield_to_mder`.
+pub fn activate() {
+    let app = ns_app();
+    if responds_to(app, c"activate") {
+        unsafe { send0::<()>(app, c"activate") };
+    } else {
+        unsafe { send1::<bool, ()>(app, c"activateIgnoringOtherApps:", true) };
+    }
+}
+
+/// Lets another mder take the front from this one, as Windows'
+/// AllowSetForegroundWindow does. A second launch calls it before handing
+/// over its target: macOS made it the active app, so only it can pass that
+/// on. It first waits to become active, since macOS does that through the
+/// event loop, which a second launch never gets to run. Returns whether it
+/// was active.
+pub fn yield_to_mder() -> bool {
+    let app = ns_app();
+    let active = wait_until_active(app, std::time::Duration::from_millis(1500));
+    if !responds_to(app, c"yieldActivationToApplication:") {
+        return active;
+    }
+    // Every mder shares one bundle identifier, so yielding to that would be
+    // yielding to this launch itself. Yield to each other mder instead; only
+    // the one with the file asks for the front.
+    let me = std::process::id() as i32;
+    unsafe {
+        let others: Id =
+            send1(class(c"NSRunningApplication"), c"runningApplicationsWithBundleIdentifier:", ns_string(BUNDLE_ID));
+        let count: usize = if others.is_null() { 0 } else { send0(others, c"count") };
+        for i in 0..count {
+            let other: Id = send1(others, c"objectAtIndex:", i);
+            if send0::<i32>(other, c"processIdentifier") != me {
+                send1::<Id, ()>(app, c"yieldActivationToApplication:", other);
+            }
+        }
+    }
+    active
+}
+
+/// After handing over its target, a second launch waits for the mder it
+/// yielded to to take the front, before it exits: if it exits first, macOS
+/// gives the front back to the app before it, and the other mder is too
+/// late. Returns whether that happened in time.
+pub fn wait_for_mder_to_take_front() -> bool {
+    pump_events_until(ns_app(), std::time::Duration::from_secs(2), false)
+}
+
+fn wait_until_active(app: Id, limit: std::time::Duration) -> bool {
+    pump_events_until(app, limit, true)
+}
+
+/// Handles events until this app's active state is `active`, for up to
+/// `limit`. Returns whether it got there. Handling events is also what lets
+/// macOS change that state, and lets the app answer VoiceOver meanwhile.
+fn pump_events_until(app: Id, limit: std::time::Duration, active: bool) -> bool {
+    const ANY_EVENT: u64 = u64::MAX;
+    let deadline = std::time::Instant::now() + limit;
+    let mode = ns_string("kCFRunLoopDefaultMode"); // NSDefaultRunLoopMode
+    loop {
+        if unsafe { send0::<bool>(app, c"isActive") } == active {
+            return true;
+        }
+        if std::time::Instant::now() > deadline {
+            return false;
+        }
+        unsafe {
+            let until: Id = send1(class(c"NSDate"), c"dateWithTimeIntervalSinceNow:", 0.05f64);
+            let event: Id = send4(app, c"nextEventMatchingMask:untilDate:inMode:dequeue:", ANY_EVENT, until, mode, true);
+            if !event.is_null() {
+                send1::<Id, ()>(app, c"sendEvent:", event);
+            }
+        }
+    }
 }
 
 /// macOS adds "Show Tab Bar" and "Show All Tabs" to an app's View menu, for

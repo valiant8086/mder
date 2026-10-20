@@ -76,6 +76,11 @@ pub fn claim(path: &Path, target: &Target, on_target: impl Fn(Target) + Clone + 
             let ok = conn.execute_string(&target.encode());
             conn.disconnect();
             if ok {
+                #[cfg(target_os = "macos")]
+                {
+                    let taken = crate::macos::wait_for_mder_to_take_front();
+                    crate::debug_log(&format!("the other mder took the front: {taken}"));
+                }
                 return Some(Claim::HandedOff);
             }
         }
@@ -109,5 +114,11 @@ fn allow_foreground() {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn allow_foreground() {
+    let active = crate::macos::yield_to_mder();
+    crate::debug_log(&format!("yielded the front to mder; this launch was active: {active}"));
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn allow_foreground() {}

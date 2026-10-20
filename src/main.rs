@@ -333,8 +333,7 @@ impl App {
         }
         match pane {
             Pane::Editor => {
-                self.bring_forward();
-                self.editor.set_focus();
+                self.bring_forward_then(|app| app.editor.set_focus());
             }
             Pane::View => {
                 // Move the screen reader when there's somewhere to go, or
@@ -343,18 +342,43 @@ impl App {
                 let move_reader = line.is_some() || target.fresh || current != Pane::View;
                 self.update_render();
                 self.last_switch = Instant::now();
-                self.bring_forward();
-                self.view.set_focus();
-                if move_reader {
-                    self.move_reader_when_active();
-                }
+                #[cfg(target_os = "macos")]
+                self.bring_forward_then(|app| {
+                    app.view.set_focus();
+                    if move_reader {
+                        app.focus_render_block();
+                    }
+                });
+                #[cfg(not(target_os = "macos"))]
+                self.bring_forward_then(|app| {
+                    app.view.set_focus();
+                    if move_reader {
+                        app.move_reader_when_active();
+                    }
+                });
             }
+        }
+    }
+
+    /// Brings the window forward and moves focus, in the order each screen
+    /// reader needs. NVDA follows a move made once the window is active, so
+    /// Windows comes forward first (and waits; see `move_reader_when_active`).
+    /// VoiceOver puts its cursor back where it was when an app comes
+    /// forward, unless focus has already moved, so macOS moves first.
+    fn bring_forward_then(&mut self, move_focus: impl FnOnce(&mut Self)) {
+        if cfg!(target_os = "macos") {
+            move_focus(self);
+            self.bring_forward();
+        } else {
+            self.bring_forward();
+            move_focus(self);
         }
     }
 
     /// Moves the screen reader to the caret's block once Windows says the
     /// window is active, so NVDA sees the move live. This was the only
     /// approach that moved NVDA every time; see plans\focus-timing.md.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     fn move_reader_when_active(&mut self) {
         if self.active {
             self.when_active();
@@ -410,6 +434,10 @@ impl App {
             self.frame.iconize(false);
         }
         self.frame.raise();
+        // raise() only orders mder's own windows; on macOS the app has to
+        // come in front of other apps too.
+        #[cfg(target_os = "macos")]
+        macos::activate();
         debug_log("brought the window forward");
     }
 
