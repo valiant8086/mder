@@ -6,15 +6,37 @@
 //! - `Applications\mder.exe`: mder's own entry, with `SupportedTypes`.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use winreg::RegKey;
 use winreg::enums::{HKEY_CURRENT_USER, KEY_ALL_ACCESS, KEY_READ};
 
-use super::{Change, FileKind, KINDS, Status};
+use super::{Change, Confirmation, FileKind, Item, KINDS, Status};
 
-pub const SUPPORTED: bool = true;
 const APP_KEY: &str = r"Applications\mder.exe";
+
+pub fn supported() -> bool {
+    true
+}
+
+/// One box per extension; the item's key is the extension.
+pub fn items(kind: &FileKind) -> Vec<Item> {
+    super::per_extension(kind)
+}
+
+/// Windows never needs an app picked: unregistering only removes mder.
+pub fn needs_choice(_changes: &[Change]) -> bool {
+    false
+}
+
+pub fn choices(_changes: &[Change]) -> Vec<(String, PathBuf)> {
+    Vec::new()
+}
+
+/// The registry changes as soon as `apply` writes it.
+pub fn confirmation() -> Confirmation {
+    Confirmation::Done
+}
 
 fn classes(access: u32) -> io::Result<RegKey> {
     RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(r"Software\Classes", access)
@@ -42,7 +64,8 @@ fn has_open_with(classes: &RegKey, kind: &FileKind, ext: &str) -> bool {
         .is_ok_and(|key| key.enum_values().flatten().any(|(name, _)| name.eq_ignore_ascii_case(kind.prog_id)))
 }
 
-pub fn status(kind: &FileKind, ext: &str) -> Status {
+pub fn status(kind: &FileKind, item: &Item) -> Status {
+    let ext = item.key.as_str();
     let Ok(classes) = classes(KEY_READ) else { return Status::NotRegistered };
     if !has_open_with(&classes, kind, ext) {
         return Status::NotRegistered;
@@ -54,16 +77,17 @@ pub fn status(kind: &FileKind, ext: &str) -> Status {
     }
 }
 
-pub fn apply(changes: &[Change]) -> io::Result<()> {
+pub fn apply(changes: &[Change], _instead: Option<&Path>) -> io::Result<()> {
     let exe = std::env::current_exe()?;
     let command = format!("\"{}\" \"%1\"", exe.display());
     let classes = RegKey::predef(HKEY_CURRENT_USER).create_subkey(r"Software\Classes")?.0;
 
     for change in changes {
+        let ext = change.item.key.as_str();
         if change.register {
-            register(&classes, change.kind, change.ext, &command)?;
+            register(&classes, change.kind, ext, &command)?;
         } else {
-            unregister(&classes, change.kind, change.ext)?;
+            unregister(&classes, change.kind, ext)?;
         }
     }
     remove_unused(&classes)?;

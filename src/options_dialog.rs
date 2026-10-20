@@ -1,8 +1,10 @@
-//! Tools, Options. Two tabs so far:
+//! Tools, Options (Settings, in the app menu on macOS). Two tabs so far:
 //! - General: which pane a file opens in.
-//! - Integration: which file types offer mder in the system's Open with menu.
+//! - Integration: which file types offer mder in the system's Open with
+//!   menu, or on macOS, which ones open in mder on double-click.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 #[cfg(windows)]
@@ -10,7 +12,7 @@ use wxdragon::accessible::AccRole;
 use wxdragon::prelude::*;
 
 use crate::check_tree::{Branch, CheckTree};
-use crate::integration::{self, Change, KINDS, Status};
+use crate::integration::{self, Change, Confirmation, Item, KINDS, Status};
 use crate::settings::{Pane, Settings};
 
 pub fn show(parent: &Frame) {
@@ -231,9 +233,11 @@ impl GeneralPage {
 
     /// Saves the choices. Returns false if that failed.
     fn apply(&self) -> bool {
+        // Start from what's saved, to keep what other tabs store there.
         let settings = Settings {
             start_pane: pane_at(self.start.get_selection()),
             location_pane: pane_at(self.at_location.get_selection()),
+            ..Settings::load()
         };
         match settings.save() {
             Ok(_) => true,
@@ -252,45 +256,72 @@ impl GeneralPage {
     }
 }
 
+/// What the Integration tab says above its boxes.
+#[cfg(target_os = "macos")]
+const INTEGRATION_INTRO: &str = "Double-clicking a checked file type opens it in mder. Unchecking one gives it back to the app that opened it before, or asks which app to use. mder is always in Finder's Open With menu for these files.";
+#[cfg(not(target_os = "macos"))]
+const INTEGRATION_INTRO: &str = "Offer mder in the Open with menu for the checked file types. This doesn't change which program opens them by default.";
+
 /// The Integration tab.
 #[derive(Clone)]
 struct IntegrationPage {
     dialog: Dialog,
     tree: Option<CheckTree>,
-    /// What each box showed when last read from the system, per kind and
-    /// extension. Only boxes that differ from this get applied, so a type
-    /// registered to another copy isn't touched unless you change it.
+    /// The boxes, per kind, as the system groups file types now.
+    items: Rc<Vec<Vec<Item>>>,
+    /// What each box showed when last read from the system. Only boxes that
+    /// differ from this get applied, so a type registered to another copy
+    /// isn't touched unless you change it.
     shown: Rc<RefCell<Vec<Vec<bool>>>>,
+    /// macOS: checks for its answer while it asks you to confirm a change.
+    /// Dropped in `close`, before the dialog goes.
+    watch: Rc<RefCell<Option<Timer<Dialog>>>>,
 }
+
+/// How often to look for macOS's answer.
+const WATCH_MS: i32 = 250;
 
 impl IntegrationPage {
     fn new(page: &Panel, dialog: Dialog) -> Self {
         let sizer = BoxSizer::builder(Orientation::Vertical).build();
-        let mut this = IntegrationPage { dialog, tree: None, shown: Rc::default() };
+        let mut this =
+            IntegrationPage { dialog, tree: None, items: Rc::default(), shown: Rc::default(), watch: Rc::default() };
 
         if !integration::supported() {
-            let text = StaticText::builder(page)
-                .with_label("Adding mder to the Open with menu isn't available on this system yet.")
-                .build();
+            let message = if cfg!(target_os = "macos") {
+                "Choosing which files open in mder only works when mder runs as mder.app."
+            } else {
+                "Adding mder to the Open with menu isn't available on this system yet."
+            };
+            let text = StaticText::builder(page).with_label(message).build();
             sizer.add(&text, 0, SizerFlag::All, 8);
             page.set_sizer(sizer, true);
             return this;
         }
 
-        let intro = StaticText::builder(page)
-            .with_label("Offer mder in the Open with menu for the checked file types. This doesn't change which program opens them by default.")
-            .build();
+        let intro = StaticText::builder(page).with_label(INTEGRATION_INTRO).build();
         intro.wrap(500);
         sizer.add(&intro, 0, SizerFlag::All, 8);
 
         let label = StaticText::builder(page).with_label("&File types:").build();
         sizer.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 8);
+        let items: Vec<Vec<Item>> = KINDS.iter().map(integration::items).collect();
         let branches: Vec<Branch> = KINDS
             .iter()
-            .map(|k| Branch { label: k.name.to_string(), leaves: k.extensions.iter().map(|e| e.to_string()).collect() })
+            .zip(&items)
+            .map(|(k, items)| Branch { label: k.name.to_string(), leaves: items.iter().map(|i| i.label.clone()).collect() })
             .collect();
         let tree = CheckTree::new(page, &branches);
         tree.add_to(&sizer, 1, SizerFlag::Expand | SizerFlag::All, 8);
+        // VoiceOver says when a branch is expanded, but not when it's
+        // collapsed, so nothing says the kinds have boxes inside them.
+        #[cfg(target_os = "macos")]
+        {
+            let hint = StaticText::builder(page)
+                .with_label("Expand a file type to choose its extensions one by one.")
+                .build();
+            sizer.add(&hint, 0, SizerFlag::Left | SizerFlag::Right, 8);
+        }
 
         let row = BoxSizer::builder(Orientation::Horizontal).build();
         let select_all = Button::builder(page).with_label("&Select all").build();
@@ -310,6 +341,7 @@ impl IntegrationPage {
         }
 
         this.tree = Some(tree);
+        this.items = Rc::new(items);
         this.refresh();
         this
     }
@@ -318,17 +350,21 @@ impl IntegrationPage {
     fn refresh(&self) {
         let Some(tree) = &self.tree else { return };
         let mut shown = Vec::new();
-        for (k, kind) in KINDS.iter().enumerate() {
+        for (k, (kind, items)) in KINDS.iter().zip(self.items.iter()).enumerate() {
             let mut row = Vec::new();
-            for (e, ext) in kind.extensions.iter().enumerate() {
-                let status = integration::status(kind, ext);
+            for (i, item) in items.iter().enumerate() {
+                let status = integration::status(kind, item);
                 let label = match &status {
-                    Status::RegisteredElsewhere(path) => format!("{ext}, registered to another copy at {path}"),
-                    _ => ext.to_string(),
+                    Status::RegisteredElsewhere(path) if cfg!(target_os = "macos") => {
+                        format!("{}, opens in another copy of mder, at {path}", item.label)
+                    }
+                    Status::RegisteredElsewhere(path) => format!("{}, registered to another copy at {path}", item.label),
+                    Status::OpensIn(app) => format!("{}, opens in {app}", item.label),
+                    _ => item.label.clone(),
                 };
-                tree.set_leaf_label(k, e, &label);
+                tree.set_leaf_label(k, i, &label);
                 let checked = status == Status::Registered;
-                tree.set_checked(k, e, checked);
+                tree.set_checked(k, i, checked);
                 row.push(checked);
             }
             shown.push(row);
@@ -336,32 +372,113 @@ impl IntegrationPage {
         *self.shown.borrow_mut() = shown;
     }
 
-    /// Applies the boxes you changed. Returns false if that failed.
+    /// Applies the boxes you changed. Returns false if that failed, or you
+    /// cancelled picking an app.
     fn apply(&self) -> bool {
         let Some(tree) = &self.tree else { return true };
+        if integration::confirmation() == Confirmation::Waiting {
+            self.tell(
+                "macOS is still asking you to confirm the last change, in a dialog of its own. Answer that first.",
+                MessageDialogStyle::IconInformation,
+            );
+            return false;
+        }
         let shown = self.shown.borrow().clone();
         let mut changes = Vec::new();
-        for (k, kind) in KINDS.iter().enumerate() {
-            for (e, ext) in kind.extensions.iter().enumerate() {
-                let checked = tree.is_checked(k, e);
-                if checked != shown[k][e] {
-                    changes.push(Change { kind, ext, register: checked });
+        for (k, (kind, items)) in KINDS.iter().zip(self.items.iter()).enumerate() {
+            for (i, item) in items.iter().enumerate() {
+                let checked = tree.is_checked(k, i);
+                if checked != shown[k][i] {
+                    changes.push(Change { kind, item, register: checked });
                 }
             }
         }
-        let result = integration::apply(&changes);
-        self.refresh();
-        if let Err(e) = result {
-            MessageDialog::builder(&self.dialog, &format!("Some changes couldn't be saved: {e}"), "Options")
-                .with_style(MessageDialogStyle::OK | MessageDialogStyle::IconError)
-                .build()
-                .show_modal();
+        let instead = if integration::needs_choice(&changes) {
+            match self.choose_app(&changes) {
+                Some(app) => Some(app),
+                None => return false,
+            }
+        } else {
+            None
+        };
+        if let Err(e) = integration::apply(&changes, instead.as_deref()) {
+            self.refresh();
+            self.tell(&format!("Some changes couldn't be saved: {e}"), MessageDialogStyle::IconError);
             return false;
+        }
+        match integration::confirmation() {
+            // The boxes stay as you set them until macOS answers.
+            Confirmation::Waiting => self.watch_for_answer(),
+            answer => self.answered(answer),
         }
         true
     }
 
+    fn watch_for_answer(&self) {
+        let timer = Timer::new(&self.dialog);
+        let page = self.clone();
+        timer.on_tick(move |_| {
+            let answer = integration::confirmation();
+            if answer != Confirmation::Waiting {
+                if let Some(timer) = page.watch.borrow().as_ref() {
+                    timer.stop();
+                }
+                page.answered(answer);
+            }
+        });
+        timer.start(WATCH_MS, false);
+        *self.watch.borrow_mut() = Some(timer);
+    }
+
+    /// Shows what the system did with the changes.
+    fn answered(&self, answer: Confirmation) {
+        self.refresh();
+        if answer == Confirmation::Refused {
+            self.tell(
+                "macOS kept the app you had for some of these file types.",
+                MessageDialogStyle::IconInformation,
+            );
+        }
+    }
+
+    fn tell(&self, message: &str, icon: MessageDialogStyle) {
+        MessageDialog::builder(&self.dialog, message, "Options")
+            .with_style(MessageDialogStyle::OK | icon)
+            .build()
+            .show_modal();
+    }
+
+    /// macOS: asks which app should open the types you unchecked, when mder
+    /// doesn't know which one did before. None if you cancel.
+    fn choose_app(&self, changes: &[Change]) -> Option<PathBuf> {
+        let apps = integration::choices(changes);
+        if apps.is_empty() {
+            MessageDialog::builder(
+                &self.dialog,
+                "No other app on this Mac can open these files, so mder has to stay their default for now.",
+                "Options",
+            )
+            .with_style(MessageDialogStyle::OK | MessageDialogStyle::IconInformation)
+            .build()
+            .show_modal();
+            return None;
+        }
+        let names: Vec<&str> = apps.iter().map(|(name, _)| name.as_str()).collect();
+        let dialog = SingleChoiceDialog::builder(
+            &self.dialog,
+            "mder doesn't know which app opened these files before. Which app should open them now?",
+            "Choose an app",
+            &names,
+        )
+        .build();
+        let chosen = (dialog.show_modal() == ID_OK).then(|| dialog.get_selection());
+        dialog.destroy();
+        let index = usize::try_from(chosen?).ok()?;
+        apps.into_iter().nth(index).map(|(_, app)| app)
+    }
+
     fn close(&self) {
+        self.watch.borrow_mut().take();
         if let Some(tree) = &self.tree {
             tree.close();
         }

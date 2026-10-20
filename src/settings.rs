@@ -6,6 +6,7 @@
 //! or `~/.config/mder`). Inside a macOS app bundle, it never goes next to the
 //! program: that's part of the app, and writing there breaks its signature.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
 
@@ -41,11 +42,16 @@ pub struct Settings {
     pub start_pane: Pane,
     /// Where a file opens when a command gives a location.
     pub location_pane: Pane,
+    /// macOS: the app that opened each file type by default before mder
+    /// took over, by type identifier, so unchecking can give it back.
+    pub previous_defaults: BTreeMap<String, String>,
 }
+
+const PREVIOUS_DEFAULT: &str = "previous_default.";
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { start_pane: Pane::View, location_pane: Pane::View }
+        Settings { start_pane: Pane::View, location_pane: Pane::View, previous_defaults: BTreeMap::new() }
     }
 }
 
@@ -53,31 +59,31 @@ impl Settings {
     /// Reads the settings file, if there is one. Unknown or broken lines are
     /// skipped, so a hand edit can't stop mder starting.
     pub fn load() -> Self {
+        match candidates().into_iter().find_map(|p| std::fs::read_to_string(p).ok()) {
+            Some(text) => Settings::parse(&text),
+            None => Settings::default(),
+        }
+    }
+
+    fn parse(text: &str) -> Self {
         let mut settings = Settings::default();
-        let Some(text) = candidates().into_iter().find_map(|p| std::fs::read_to_string(p).ok()) else {
-            return settings;
-        };
         for line in text.lines() {
             let Some((key, value)) = line.split_once('=') else { continue };
             match key.trim() {
                 "start_pane" => settings.start_pane = Pane::parse(value).unwrap_or(settings.start_pane),
                 "location_pane" => settings.location_pane = Pane::parse(value).unwrap_or(settings.location_pane),
-                _ => {}
+                key => {
+                    if let Some(file_type) = key.strip_prefix(PREVIOUS_DEFAULT) {
+                        settings.previous_defaults.insert(file_type.to_string(), value.trim().to_string());
+                    }
+                }
             }
         }
         settings
     }
 
     pub fn save(&self) -> io::Result<PathBuf> {
-        let text = format!(
-            "# mder settings. Change them in Tools, Options, or edit them here.\n\
-             # Where a file opens with no location: view or editor.\n\
-             start_pane={}\n\
-             # Where a file opens when a command gives a location: view or editor.\n\
-             location_pane={}\n",
-            self.start_pane.as_str(),
-            self.location_pane.as_str()
-        );
+        let text = self.to_text();
         let mut last_error = io::Error::other("no place to save settings");
         for path in candidates() {
             if let Some(dir) = path.parent() {
@@ -89,6 +95,25 @@ impl Settings {
             }
         }
         Err(last_error)
+    }
+
+    fn to_text(&self) -> String {
+        let mut text = format!(
+            "# mder settings. Change them in Options, or edit them here.\n\
+             # Where a file opens with no location: view or editor.\n\
+             start_pane={}\n\
+             # Where a file opens when a command gives a location: view or editor.\n\
+             location_pane={}\n",
+            self.start_pane.as_str(),
+            self.location_pane.as_str()
+        );
+        if !self.previous_defaults.is_empty() {
+            text.push_str("# macOS: the app each file type goes back to when mder stops being its default.\n");
+            for (file_type, app) in &self.previous_defaults {
+                text.push_str(&format!("{PREVIOUS_DEFAULT}{file_type}={app}\n"));
+            }
+        }
+        text
     }
 }
 
@@ -130,6 +155,15 @@ mod tests {
         }
         assert_eq!(Pane::parse(" editor\r"), Some(Pane::Editor));
         assert_eq!(Pane::parse("sideways"), None);
+    }
+
+    #[test]
+    fn round_trips() {
+        let mut s = Settings { start_pane: Pane::Editor, ..Settings::default() };
+        s.previous_defaults.insert("net.daringfireball.markdown".into(), "/System/Applications/TextEdit.app".into());
+        s.previous_defaults.insert("dyn.ah62d4rv4ge80445e".into(), "/Applications/Some App.app".into());
+        assert_eq!(Settings::parse(&s.to_text()), s);
+        assert_eq!(Settings::parse(&Settings::default().to_text()), Settings::default());
     }
 
     #[test]
