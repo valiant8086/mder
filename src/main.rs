@@ -164,8 +164,9 @@ struct App {
     waiting_for_active: bool,
     /// Moves NVDA anyway if the activate event never comes.
     focus_timer: Option<Timer<Frame>>,
-    /// Which pane had focus when the window last stopped being active.
-    pane_when_inactive: Pane,
+    /// The pane that last got focus, kept as focus moves: when the window
+    /// stops being active, GTK has already taken focus from both panes.
+    last_pane: Pane,
 }
 
 impl App {
@@ -434,7 +435,7 @@ impl App {
     /// The pane you're in, or were in when the window was last active.
     fn current_pane(&self) -> Pane {
         if !self.active {
-            self.pane_when_inactive
+            self.last_pane
         } else if self.editor.has_focus() {
             Pane::Editor
         } else {
@@ -759,7 +760,7 @@ fn open_window(path: Option<PathBuf>, target: Target) {
         active: true,
         waiting_for_active: false,
         focus_timer: None,
-        pane_when_inactive: Pane::Editor,
+        last_pane: Pane::Editor,
     }));
 
     // Re-render shortly after typing stops.
@@ -772,6 +773,13 @@ fn open_window(path: Option<PathBuf>, target: Target) {
         let render_timer = render_timer.clone();
         editor.on_text_updated(move |_| {
             render_timer.start(300, true);
+        });
+    }
+    {
+        let app = app.clone();
+        editor.on_set_focus(move |event| {
+            with_app(&app, |app| app.last_pane = Pane::Editor);
+            event.skip(true);
         });
     }
 
@@ -809,12 +817,8 @@ fn open_window(path: Option<PathBuf>, target: Target) {
             if let WindowEventData::Activate(ref a) = event {
                 let active = a.is_active();
                 with_app(&app, |app| {
-                    if !active {
-                        // Focus is still where you left it at this point.
-                        app.pane_when_inactive = if app.editor.has_focus() { Pane::Editor } else { Pane::View };
-                    }
                     app.active = active;
-                    debug_log(&format!("window active: {active}"));
+                    debug_log(&format!("window active: {active}, last pane {:?}", app.last_pane));
                     if active && app.waiting_for_active {
                         app.when_active();
                     }
@@ -865,6 +869,8 @@ fn open_window(path: Option<PathBuf>, target: Target) {
                     let caret: Option<i64> = caret.parse().ok();
                     debug_log(&format!("F6 in the rendered view; the page's caret is on line {caret:?}"));
                     app.switch_from_view(caret);
+                } else if msg == "focus" {
+                    app.last_pane = Pane::View;
                 } else if msg == "save" {
                     app.save();
                 } else if let Some(key) = msg.strip_prefix("menu:") {

@@ -1,5 +1,5 @@
-//! Systems where mder can't register yet. Linux is planned: a desktop file
-//! in ~/.local/share/applications listing the MIME types.
+//! Systems where mder can't register: anything that isn't Windows, macOS,
+//! or a Unix desktop (see linux.rs).
 
 use std::io;
 use std::path::{Path, PathBuf};

@@ -21,7 +21,7 @@ Also, if another program changes the file, mder reloads it. With unsaved edits, 
 
 Download the zip from the [releases page](https://github.com/valiant8086/mder/releases), unzip it anywhere, and run `mder.exe`. It's a single portable exe; nothing gets installed. It needs the WebView2 runtime, which ships with Windows 10 and 11.
 
-To offer mder when you open markdown files from Explorer, use Tools, Options, or run `mder --register` once. See [Open with](#open-with) below.
+To offer mder when you open markdown files from Explorer (or your Linux file manager), use Tools, Options, or run `mder --register` once. See [Open with](#open-with) below.
 
 On a Mac, download the macOS zip, which runs on both Apple silicon and Intel Macs, and unzip it. Move mder.app where you want to keep it, such as Applications, before opening it. mder isn't signed by Apple, so the first time you open it, macOS refuses: go to System Settings, Privacy & Security, and choose "Open Anyway". After that it opens normally. It needs macOS 12 or later.
 
@@ -81,6 +81,8 @@ Registering writes to your user's part of the registry, so it needs no admin rig
 
 On macOS, mder.app is always in Finder's Open With menu for markdown files. The Integration tab in Settings instead chooses which types open in mder when you double-click them. Checking one makes mder the default and remembers the app it replaced; unchecking gives the type back to that app, or asks which app to use. macOS asks you to confirm each change.
 
+On Linux, registering works as on Windows: mder joins the Open with list in your file manager, and never changes which program opens a file type by default. Linux desktops go by file type rather than extension, so the Integration tab has one box for all markdown. Registering writes `mder.desktop` to `~/.local/share/applications`, and also teaches your desktop that .mdown, .mkdn and .mdwn are markdown (some systems call them plain text), with `mder.xml` in `~/.local/share/mime/packages`. Unchecking the box removes both. If no default program is set for markdown, the desktop may open it in mder on double-click, since mder names markdown more closely than general text editors do; choose a default in your file manager's Open with dialog to change that. `--register` and `--unregister` work here too.
+
 ## Building
 
 You need Rust, and on Windows the Visual Studio C++ build tools with CMake and Ninja (both come with Visual Studio's C++ workload). wxDragon downloads prebuilt wxWidgets on the first build.
@@ -111,7 +113,7 @@ Tested on Debian 13 with the MATE desktop and Orca. You need Rust and these pack
 build-essential cmake ninja-build pkg-config libclang-dev libgtk-3-dev libwebkit2gtk-4.1-dev libssl-dev libpng-dev libjpeg-dev libtiff-dev libexpat1-dev libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev
 ```
 
-Then `cargo build --release`, and run `target/release/mder`. The first build takes a few minutes while it builds wxWidgets. Open with isn't supported on Linux yet.
+Then `cargo build --release`, and run `target/release/mder`. The first build takes a few minutes while it builds wxWidgets.
 
 ## License
 

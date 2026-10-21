@@ -5,6 +5,9 @@
 const post = (msg) => { try { window.mder.postMessage(msg); } catch (e) { /* not ready */ } };
 const doc = document.getElementById("doc");
 
+// Tells the app you're in this pane, so a later open of the file keeps you here.
+window.addEventListener("focus", () => post("focus"));
+
 // The block for a source line: the last one starting at or before it.
 function blockAt(line) {
   let best = null, bestLine = -1;

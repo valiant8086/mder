@@ -75,7 +75,18 @@ pub fn show(parent: &Frame) {
     }
 
     general.focus();
+    // GTK puts focus on the tabs as the dialog appears, so there it moves
+    // to the first choice once the dialog is up.
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let first_focus = {
+        let timer = Timer::new(&dialog);
+        timer.on_tick(move |_| general.focus());
+        timer.start(PAGE_FOCUS_DELAY_MS, true);
+        timer
+    };
     dialog.show_modal();
+    #[cfg(not(any(windows, target_os = "macos")))]
+    drop(first_focus);
     #[cfg(target_os = "macos")]
     drop(tab_keys);
     integration.close();
@@ -88,17 +99,33 @@ type TabKeys = Option<crate::macos::ControlTab>;
 #[cfg(not(any(windows, target_os = "macos")))]
 type TabKeys = ();
 
+#[cfg(not(any(windows, target_os = "macos")))]
+const PAGE_FOCUS_DELAY_MS: i32 = 50;
+
 /// Control+Tab and Control+Shift+Tab move to the next and previous tab, from
 /// anywhere in the dialog, then into that tab's first control. Windows' tab
 /// control does this itself; macOS's doesn't. On the Mac, Command+Shift+]
 /// and [ work too, as they do for tabs in Safari and Finder.
 #[cfg(not(windows))]
 fn switch_tabs_by_keyboard(dialog: &Dialog, notebook: Notebook) -> TabKeys {
-    let show_tab = move |forward: bool| {
-        notebook.advance_selection(forward);
+    let focus_page = move || {
         if let Some(page) = usize::try_from(notebook.selection()).ok().and_then(|i| notebook.get_page(i)) {
             page.set_focus();
         }
+    };
+    // GTK is still showing the page right after the switch, and focus moved
+    // into it then gets lost, so there it moves a moment later.
+    #[cfg(not(target_os = "macos"))]
+    let focus_page = {
+        let timer = Timer::new(dialog);
+        timer.on_tick(move |_| focus_page());
+        move || {
+            timer.start(PAGE_FOCUS_DELAY_MS, true);
+        }
+    };
+    let show_tab = move |forward: bool| {
+        notebook.advance_selection(forward);
+        focus_page();
     };
     dialog.on_char_hook(move |event| {
         if let WindowEventData::Keyboard(ref key) = event {
@@ -209,17 +236,34 @@ fn pane_at(index: i32) -> Pane {
     if index == 1 { Pane::Editor } else { Pane::View }
 }
 
+/// A set of pane choices, added to `sizer`. On GTK, wxWidgets makes a radio
+/// box's title the label of the next control in its parent too, so Orca read
+/// the second box with the first one's title. There each box gets a panel of
+/// its own, with no next control.
+fn radio_box(page: &Panel, sizer: &BoxSizer, label: &str) -> RadioBox {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let holder = Panel::builder(page).build();
+        let radio = RadioBox::builder(&holder, &PANE_CHOICES).with_label(label).build();
+        let inner = BoxSizer::builder(Orientation::Vertical).build();
+        inner.add(&radio, 1, SizerFlag::Expand, 0);
+        holder.set_sizer(inner, true);
+        sizer.add(&holder, 0, SizerFlag::Expand | SizerFlag::All, 8);
+        radio
+    }
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    {
+        let radio = RadioBox::builder(page, &PANE_CHOICES).with_label(label).build();
+        sizer.add(&radio, 0, SizerFlag::Expand | SizerFlag::All, 8);
+        radio
+    }
+}
+
 impl GeneralPage {
     fn new(page: &Panel, dialog: Dialog) -> Self {
         let sizer = BoxSizer::builder(Orientation::Vertical).build();
-        let start = RadioBox::builder(page, &PANE_CHOICES)
-            .with_label("When opening a file, start in:")
-            .build();
-        sizer.add(&start, 0, SizerFlag::Expand | SizerFlag::All, 8);
-        let at_location = RadioBox::builder(page, &PANE_CHOICES)
-            .with_label("When a command opens a file at a location, start in:")
-            .build();
-        sizer.add(&at_location, 0, SizerFlag::Expand | SizerFlag::All, 8);
+        let start = radio_box(page, &sizer, "When opening a file, start in:");
+        let at_location = radio_box(page, &sizer, "When a command opens a file at a location, start in:");
         let note = StaticText::builder(page)
             .with_label("--edit or --view on the command line overrides these for that launch. A file that's already open stays in the pane you're in.")
             .build();

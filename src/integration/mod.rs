@@ -8,6 +8,8 @@
 //! - macOS: mder.app always offers itself in Open With (its Info.plist says
 //!   which types it opens), so a box instead makes mder the app that opens
 //!   the type on double-click, and unchecking gives the type back.
+//! - Linux: a box offers mder in Open with for a whole kind, through a
+//!   desktop entry, since desktops go by file type rather than extension.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -22,9 +24,14 @@ mod macos;
 #[cfg(target_os = "macos")]
 use macos as platform;
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(all(unix, not(target_os = "macos")))]
+mod linux;
+#[cfg(all(unix, not(target_os = "macos")))]
+use linux as platform;
+
+#[cfg(not(any(windows, unix)))]
 mod unsupported;
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, unix)))]
 use unsupported as platform;
 
 pub struct FileKind {
@@ -68,7 +75,7 @@ pub enum Status {
     /// Registered, and pointing at this copy of mder.
     Registered,
     /// Registered, but pointing at another copy, for example one that moved.
-    #[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+    #[cfg_attr(not(any(windows, unix)), allow(dead_code))]
     RegisteredElsewhere(String),
     /// macOS: another app opens this type, named here.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -92,11 +99,13 @@ pub fn status(kind: &FileKind, item: &Item) -> Status {
 
 /// One change: register (`true`) or unregister (`false`) one checkbox.
 /// Only read where registering is supported.
-#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+#[cfg_attr(not(any(windows, unix)), allow(dead_code))]
 pub struct Change<'a> {
     /// macOS goes by the item's file type alone.
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     pub kind: &'a FileKind,
+    /// Linux goes by the kind alone.
+    #[cfg_attr(all(unix, not(target_os = "macos")), allow(dead_code))]
     pub item: &'a Item,
     pub register: bool,
 }
@@ -175,7 +184,7 @@ fn changes<'a>(items: &'a [(&'static FileKind, Vec<Item>)], register: bool) -> V
 }
 
 /// One checkbox per extension, keyed by the extension.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(unix, allow(dead_code))]
 fn per_extension(kind: &FileKind) -> Vec<Item> {
     kind.extensions
         .iter()
@@ -185,7 +194,7 @@ fn per_extension(kind: &FileKind) -> Vec<Item> {
 
 /// A label for a set of extensions: ".md", ".md and .markdown", or
 /// ".a, .b and .c".
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(windows, allow(dead_code))]
 fn join_extensions(extensions: &[&str]) -> String {
     match extensions {
         [] => String::new(),

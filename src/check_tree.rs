@@ -3,13 +3,17 @@
 //! when only some of its leaves are checked.
 //!
 //! Windows gets the native tree view with its own checkboxes, which NVDA reads
-//! best. Elsewhere it's wxTreeListCtrl, which is the system's own tree there.
-//! See checkable-tree-findings.md in C:\code\wxdragon UI experiments.
+//! best. The Mac gets wxTreeListCtrl, which is the system's own tree there.
+//! See checkable-tree-findings.md in C:\code\wxdragon UI experiments. On
+//! Linux, GTK doesn't pass wxTreeListCtrl's labels to screen readers, so Orca
+//! hears nameless rows; there it's plain checkboxes instead.
 
 #[cfg(windows)]
 pub use native::CheckTree;
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub use generic::CheckTree;
+#[cfg(all(unix, not(target_os = "macos")))]
+pub use flat::CheckTree;
 
 /// One branch and its leaves' labels.
 pub struct Branch {
@@ -281,9 +285,80 @@ mod native {
     }
 }
 
-/// wxTreeListCtrl. Used on Linux and macOS; compiled on Windows too so it
-/// keeps building, though Windows doesn't use it.
-#[cfg_attr(windows, allow(dead_code))]
+/// Plain checkboxes, one per leaf, each labelled "branch: leaf". Used on
+/// Linux; compiled everywhere so it keeps building.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+mod flat {
+    use std::rc::Rc;
+
+    use wxdragon::prelude::*;
+
+    use super::Branch;
+
+    #[derive(Clone)]
+    pub struct CheckTree {
+        sizer: Rc<BoxSizer>,
+        /// Each branch's label and its leaves' boxes.
+        boxes: Rc<Vec<(String, Vec<CheckBox>)>>,
+    }
+
+    impl CheckTree {
+        pub fn new(parent: &dyn WxWidget, branches: &[Branch]) -> Self {
+            let sizer = BoxSizer::builder(Orientation::Vertical).build();
+            let boxes = branches
+                .iter()
+                .map(|branch| {
+                    let leaves = branch
+                        .leaves
+                        .iter()
+                        .map(|leaf| {
+                            let check = CheckBox::builder(parent).with_label(&label(&branch.label, leaf)).build();
+                            sizer.add(&check, 0, SizerFlag::All, 4);
+                            check
+                        })
+                        .collect();
+                    (branch.label.clone(), leaves)
+                })
+                .collect();
+            CheckTree { sizer: Rc::new(sizer), boxes: Rc::new(boxes) }
+        }
+
+        pub fn close(&self) {}
+
+        pub fn add_to(&self, sizer: &BoxSizer, proportion: i32, flags: SizerFlag, border: i32) {
+            sizer.add_sizer(&*self.sizer, proportion, flags, border);
+        }
+
+        pub fn is_checked(&self, branch: usize, leaf: usize) -> bool {
+            self.boxes[branch].1[leaf].is_checked()
+        }
+
+        pub fn set_checked(&self, branch: usize, leaf: usize, checked: bool) {
+            self.boxes[branch].1[leaf].set_value(checked);
+        }
+
+        pub fn set_all(&self, checked: bool) {
+            for (_, leaves) in self.boxes.iter() {
+                for check in leaves {
+                    check.set_value(checked);
+                }
+            }
+        }
+
+        pub fn set_leaf_label(&self, branch: usize, leaf: usize, text: &str) {
+            let (name, leaves) = &self.boxes[branch];
+            leaves[leaf].set_label(&label(name, text));
+        }
+    }
+
+    fn label(branch: &str, leaf: &str) -> String {
+        format!("{branch}: {leaf}")
+    }
+}
+
+/// wxTreeListCtrl. Used on macOS; compiled elsewhere too so it keeps
+/// building.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod generic {
     use wxdragon::prelude::*;
     use wxdragon::widgets::list_ctrl::ListColumnFormat;
