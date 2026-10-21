@@ -5,3 +5,5 @@ table { border-collapse: collapse; }
 th, td { border: 1px solid #999; padding: 0.2em 0.6em; }
 blockquote { border-left: 4px solid #ccc; margin-left: 0; padding-left: 1em; }
 [data-line]:focus, .li-text:focus { outline: 2px solid #3060d0; outline-offset: 2px; }
+/* Linux: the page writes the bullets and numbers itself; see page.js. */
+.mder-markers { list-style: none; }

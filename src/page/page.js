@@ -28,6 +28,55 @@ function focusTemporarily(el) {
 // browse mode, and reads focus differently from NVDA, so the NVDA tricks
 // below would only confuse it.
 const orca = /Linux/.test(navigator.platform);
+
+// WebKitGTK reports a list inside a list item wrongly: the item's text runs
+// on into the inner list's, and the inner list is reported separately too,
+// which stops Orca's arrows at the list. An inner list placed between the
+// outer list's items reports cleanly, so for Orca, inner lists move there,
+// just after their item. Browsers accept that shape, though it isn't
+// strictly valid HTML.
+function hoistNestedLists(root) {
+  for (const item of root.querySelectorAll("li")) {
+    let after = item;
+    for (const child of [...item.children]) {
+      if (child.tagName === "UL" || child.tagName === "OL") {
+        after.after(child);
+        after = child;
+      }
+    }
+  }
+}
+// WebKitGTK reports each bullet and number as a separate object that reads
+// as nothing, so Orca never says "bullet". For Orca, they're written into
+// each item as real text instead (drawing them with the style sheet threw
+// WebKitGTK's line ends off by their length), and WebKit's own are hidden.
+// Hiding them can make WebKit stop calling it a list, hence role="list".
+const BULLETS = ["• ", "◦ ", "▪ "];
+function writeMarkers(root) {
+  for (const list of root.querySelectorAll("ul, ol")) {
+    list.classList.add("mder-markers");
+    list.setAttribute("role", "list");
+    let depth = 0;
+    for (let p = list.parentElement; p && p !== root; p = p.parentElement) {
+      if (p.tagName === "UL" || p.tagName === "OL") depth++;
+    }
+    let number = Number(list.getAttribute("start") || 1);
+    for (const item of list.children) {
+      if (item.tagName !== "LI" || item.querySelector(":scope > .mder-marker")) continue;
+      // Task list items show their checkbox instead, as on GitHub.
+      if (item.querySelector(":scope > input[type=checkbox], :scope > .li-text > input[type=checkbox]:first-child")) continue;
+      const marker = document.createElement("span");
+      marker.className = "mder-marker";
+      marker.textContent = list.tagName === "OL" ? `${number++}. ` : BULLETS[depth % BULLETS.length];
+      item.prepend(marker);
+    }
+  }
+}
+
+if (orca) {
+  hoistNestedLists(doc);
+  writeMarkers(doc);
+}
 // How long the app's own focus news gets to reach Orca first. See mderFocusLine.
 const ORCA_SETTLE_MS = 150;
 
@@ -44,9 +93,8 @@ if (sentinel) {
   document.body.appendChild(sentinel);
 }
 
-// How long after Orca is in the page before the caret moves to the block.
-// Orca reads the line when a page moves the caret, but not when it happens
-// as part of a focus change. See mderFocusLine.
+// How long a block keeps focus for Orca to take it in and read it, before
+// letting go. See moveReaderTo.
 const ORCA_READ_MS = 300;
 
 // Called by the app to put the screen reader on this line.
@@ -83,27 +131,26 @@ function moveReaderTo(block) {
   const where = block.dataset.line || block.id;
   if (orca) {
     // Orca only uses browse mode once something inside the page has gained
-    // focus. So the block gains focus, then lets go at once: left focused,
-    // some blocks put Orca in focus mode, where the arrows don't read. Then
-    // the caret moves there, for Orca to read, and for Enter and F6. Orca
-    // has to hear about the block after the app's own view gets focus, or
-    // it ends up outside the page. The page and the app tell Orca
-    // separately, so when the app has just moved focus here, wait for the
-    // page to get it, then a moment more.
+    // focus. So the block gains focus, and keeps it while Orca reads it:
+    // letting go at once, WebKitGTK sometimes reports only the letting go,
+    // and Orca never enters the page; Orca also ignores a focus that's gone
+    // by the time it looks. Then it lets go, since left focused, some
+    // blocks put Orca in focus mode, where the arrows don't read; and the
+    // caret moves there, for Enter and F6. Orca has to hear about the block
+    // after the app's own view gets focus, or it ends up outside the page.
+    // The page and the app tell Orca separately, so when the app has just
+    // moved focus here, wait for the page to get it, then a moment more.
+    // Orca reads the block from its focus; the caret only marks the place,
+    // for Enter and F6, since Orca never speaks a caret a page moves.
     const place = () => {
-      focusTemporarily(block);
-      block.blur();
-      setTimeout(() => window.getSelection().collapse(block, 0), ORCA_READ_MS);
-    };
-    if (document.hasFocus()) {
-      // Already in the page, Orca ignores a focus that's gone by the time
-      // it looks, and then the caret moving somewhere it isn't watching. So
-      // the block keeps focus while Orca reads it, then lets go.
       focusTemporarily(block);
       setTimeout(() => {
         block.blur();
         window.getSelection().collapse(block, 0);
       }, ORCA_READ_MS);
+    };
+    if (document.hasFocus()) {
+      place();
       return `${where}, moved within the page`;
     }
     // Only the latest placement waits: a menu command such as Switch pane
@@ -129,6 +176,10 @@ function moveReaderTo(block) {
 window.mderUpdate = (html) => {
   const next = document.createElement("div");
   next.innerHTML = html;
+  if (orca) {
+    hoistNestedLists(next);
+    writeMarkers(next);
+  }
   morph(doc, next);
   return "ok";
 };
