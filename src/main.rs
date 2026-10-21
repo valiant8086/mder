@@ -4,6 +4,8 @@ mod args;
 mod instance;
 mod check_tree;
 mod integration;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 mod options_dialog;
@@ -474,9 +476,14 @@ impl App {
         }
         self.frame.raise();
         // raise() only orders mder's own windows; on macOS the app has to
-        // come in front of other apps too.
+        // come in front of other apps too, and on Linux the window manager
+        // has to be asked the way a taskbar would.
         #[cfg(target_os = "macos")]
         macos::activate();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if !linux::activate(self.frame.get_handle()) {
+            debug_log("couldn't ask the window manager to bring the window forward (not X11)");
+        }
         debug_log("brought the window forward");
     }
 
@@ -904,6 +911,22 @@ fn open_window(path: Option<PathBuf>, target: Target) {
                     .show_modal();
             }),
             _ => e.skip(true),
+        });
+    }
+
+    // On Linux, closing a menu gives focus back to the web view, but not to
+    // anything in the page, which leaves Orca outside the document.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let app = app.clone();
+        frame.on_menu_closed(move |event| {
+            with_app(&app, |app| {
+                if !app.editor.has_focus() {
+                    let result = app.view.run_script("mderRestoreReader()");
+                    debug_log(&format!("menu closed over the rendered view: {result:?}"));
+                }
+            });
+            event.skip(true);
         });
     }
 

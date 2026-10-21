@@ -56,6 +56,27 @@ window.mderFocusLine = (line) => {
   return moveReaderTo(block);
 };
 
+// Called by the app when a menu closes over the rendered view. GTK gives
+// focus back to the web view itself, not to anything in the page, so Orca
+// isn't in the document any more. Put it back where it was reading.
+window.mderRestoreReader = () => {
+  if (!orca) return "not needed";
+  // The menu reports closing before GTK has given focus back, so wait for
+  // that to happen first, or Orca hears the web view last.
+  setTimeout(() => {
+    const at = elementAtCaret();
+    const block = (at && at.closest("#doc [data-line]")) || doc.querySelector("[data-line]");
+    if (block) moveReaderTo(block);
+  }, ORCA_RESTORE_MS);
+  return "restoring shortly";
+};
+
+// How long after a menu closes before Orca is put back. See mderRestoreReader.
+const ORCA_RESTORE_MS = 250;
+
+// A placement waiting for the page to get focus. See moveReaderTo.
+let pendingPlace = null;
+
 // Puts the screen reader on a block of the page, and returns what happened,
 // for mder's debug log.
 function moveReaderTo(block) {
@@ -75,10 +96,24 @@ function moveReaderTo(block) {
       setTimeout(() => window.getSelection().collapse(block, 0), ORCA_READ_MS);
     };
     if (document.hasFocus()) {
-      place();
-      return `${where}, placed`;
+      // Already in the page, Orca ignores a focus that's gone by the time
+      // it looks, and then the caret moving somewhere it isn't watching. So
+      // the block keeps focus while Orca reads it, then lets go.
+      focusTemporarily(block);
+      setTimeout(() => {
+        block.blur();
+        window.getSelection().collapse(block, 0);
+      }, ORCA_READ_MS);
+      return `${where}, moved within the page`;
     }
-    window.addEventListener("focus", () => setTimeout(place, ORCA_SETTLE_MS), { once: true });
+    // Only the latest placement waits: a menu command such as Switch pane
+    // can queue one up just before F6 queues another.
+    if (pendingPlace) window.removeEventListener("focus", pendingPlace);
+    pendingPlace = () => {
+      pendingPlace = null;
+      setTimeout(place, ORCA_SETTLE_MS);
+    };
+    window.addEventListener("focus", pendingPlace, { once: true });
     return `${where}, placing when the page gets focus`;
   }
   // A focusable list item puts NVDA in focus mode, so NVDA gets the item's
@@ -164,7 +199,10 @@ function caretLine() {
 }
 
 // The app's keys never reach it while the web view has focus: its menu
-// shortcuts, and even Alt for the menu bar. Pass them on.
+// shortcuts, and even Alt for the menu bar. Pass them on. On Linux, keys
+// the page doesn't use go back to the window, which opens its own menus, so
+// the menu keys are left alone there.
+const forwardMenuKeys = !orca;
 let altAlone = false;
 document.addEventListener("keydown", (e) => {
   if (e.key === "Alt") {
@@ -177,7 +215,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "F6" && !e.ctrlKey && !e.altKey) { e.preventDefault(); post("switch:" + caretLine()); }
   else if (e.key.toLowerCase() === "s" && e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); post("save"); }
   else if (e.key === "," && e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); post("options"); }
-  else if (e.key === "F10" && plain) { e.preventDefault(); post("menu:"); }
+  else if (e.key === "F10" && plain && forwardMenuKeys) { e.preventDefault(); post("menu:"); }
   // Enter on a block edits its line. NVDA and VoiceOver turn Enter into a
   // click (handled above), and the page never sees the key; Orca only does
   // that for links and form fields, and passes Enter on elsewhere.
@@ -188,11 +226,11 @@ document.addEventListener("keydown", (e) => {
     if (block) { e.preventDefault(); post("goto:" + block.dataset.line); }
   }
   // Alt plus a letter opens that menu. Ctrl+Alt is AltGr on some keyboards.
-  else if (e.altKey && !e.ctrlKey && /^[a-z]$/i.test(e.key)) { e.preventDefault(); post("menu:" + e.key.toLowerCase()); }
+  else if (e.altKey && !e.ctrlKey && /^[a-z]$/i.test(e.key) && forwardMenuKeys) { e.preventDefault(); post("menu:" + e.key.toLowerCase()); }
 }, true);
 // Alt pressed and released on its own opens the menu bar.
 document.addEventListener("keyup", (e) => {
-  if (e.key === "Alt" && altAlone) { e.preventDefault(); post("menu:"); }
+  if (e.key === "Alt" && altAlone && forwardMenuKeys) { e.preventDefault(); post("menu:"); }
   altAlone = false;
 }, true);
 window.addEventListener("blur", () => { altAlone = false; });
