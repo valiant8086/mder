@@ -19,11 +19,13 @@ Also, if another program changes the file, mder reloads it. With unsaved edits, 
 
 ## Getting it
 
-Download the zip from the [releases page](https://github.com/valiant8086/mder/releases), unzip it anywhere, and run `mder.exe`. It's a single portable exe; nothing gets installed. It needs the WebView2 runtime, which ships with Windows 10 and 11.
+Download `mder0.1-windows-x64.exe` (the number is the version; `-arm64` for Windows on ARM) from the [releases page](https://github.com/valiant8086/mder/releases) and run it. It asks which folder to unpack mder into; then run `mder.exe` from there. mder is a single portable exe; nothing gets installed. It needs the WebView2 runtime, which ships with Windows 10 and 11.
 
 To offer mder when you open markdown files from Explorer (or your Linux file manager), use Tools, Options, or run `mder --register` once. See [Open with](#open-with) below.
 
-On a Mac, download the macOS zip, which runs on both Apple silicon and Intel Macs, and unzip it. Move mder.app where you want to keep it, such as Applications, before opening it. mder isn't signed by Apple, so the first time you open it, macOS refuses: go to System Settings, Privacy & Security, and choose "Open Anyway". After that it opens normally. It needs macOS 12 or later.
+On a Mac, download `mder0.1-mac-universal.zip`, which runs on both Apple silicon and Intel Macs, and unzip it. Move mder.app where you want to keep it, such as Applications, before opening it. mder isn't signed by Apple, so the first time you open it, macOS refuses: go to System Settings, Privacy & Security, and choose "Open Anyway". After that it opens normally. It needs macOS 12 or later.
+
+On Linux, download `mder0.1-linux-x64.tar.gz` (or `-arm64`), unpack it (`tar -xzf mder0.1-linux-x64.tar.gz` makes a folder named `mder`), and run `mder/mder`. It uses your system's GTK 3 and WebKitGTK 4.1, which most desktops already have; on Debian or Ubuntu, the packages are `libgtk-3-0` and `libwebkit2gtk-4.1-0`. Built on Debian 13; tested there with MATE and on Ubuntu 26.04 with GNOME.
 
 ## Command line
 
@@ -91,7 +93,7 @@ You need Rust, and on Windows the Visual Studio C++ build tools with CMake and N
 cargo build --release
 ```
 
-`scripts\dist.ps1` does a release build and packs it into `dist\` with the licenses. It finds CMake and Ninja from Visual Studio if they aren't on the PATH. Add `-Install C:\some\folder` to copy the result there too.
+`scripts\dist.ps1` does a release build and packs it with the licenses into `dist\mder0.1-windows-x64.exe`, a 7-Zip self-extractor (it needs 7-Zip installed). It finds CMake and Ninja from Visual Studio if they aren't on the PATH. Add `-Install C:\some\folder` to copy the result there too.
 
 Pushing a tag like `v0.1.0` makes GitHub build and publish a release.
 
@@ -113,7 +115,7 @@ Tested on Debian 13 with the MATE desktop and Orca. You need Rust and these pack
 build-essential cmake ninja-build pkg-config libclang-dev libgtk-3-dev libwebkit2gtk-4.1-dev libssl-dev libpng-dev libjpeg-dev libtiff-dev libexpat1-dev libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev
 ```
 
-Then `cargo build --release`, and run `target/release/mder`. The first build takes a few minutes while it builds wxWidgets.
+Then `cargo build --release`, and run `target/release/mder`. The first build takes a few minutes while it builds wxWidgets. `scripts/linux-pack.sh` builds it and packs the download, `dist/mder0.1-linux-x64.tar.gz`.
 
 ## License
 

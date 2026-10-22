@@ -37,7 +37,7 @@ const ID_OPTIONS: i32 = 5022;
 
 const ABOUT: &str = concat!(
     "mder ",
-    env!("CARGO_PKG_VERSION"),
+    env!("MDER_VERSION"),
     "\n\nA markdown editor and renderer built for screen readers.\n\n",
     "Copyright 2026 valiant8086.\n",
     "Licensed under the MIT license or the Apache License 2.0, at your option.\n\n",

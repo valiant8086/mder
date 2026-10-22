@@ -1,5 +1,5 @@
 # Pushing a tag like v0.1.0 builds mder for Windows and macOS, and publishes
-# a GitHub release with both zips.
+# a GitHub release with the Windows self-extractor and the Mac zip.
 name: Release
 
 on:
@@ -19,13 +19,13 @@ jobs:
         shell: pwsh
         run: if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja -y }
       - run: cargo test
-      - name: Build the release zip
+      - name: Build the self-extractor
         shell: pwsh
         run: ./scripts/dist.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: dist/*.zip
+          path: dist/mder*.exe
 
   # One app for Apple silicon and Intel. It's signed for no one in
   # particular, so people allow it once in System Settings, Privacy &
@@ -68,4 +68,4 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/*.zip --repo "${{ github.repository }}" --title "mder ${{ github.ref_name }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" dist/*.exe dist/*.zip --repo "${{ github.repository }}" --title "mder ${{ github.ref_name }}" --generate-notes

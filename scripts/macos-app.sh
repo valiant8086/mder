@@ -7,9 +7,12 @@
 #   scripts/macos-app.sh --debug            # debug build: target/debug/mder.app
 #   scripts/macos-app.sh --universal        # Apple silicon and Intel in one app:
 #                                           #   target/universal/release/mder.app
-#   scripts/macos-app.sh --universal --zip  # and packs it into dist/ for a release
+#   scripts/macos-app.sh --universal --zip  # and packs it into dist/ for a release,
+#                                           #   named for the version's first two
+#                                           #   parts: dist/mder0.2-mac-universal.zip
 #
 # --universal needs Rust's targets for both: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+# Set MDER_VERSION to build and name it as another version, for testing the updater.
 #
 # Open it with: open target/release/mder.app --args path/to/file.md
 set -eu
@@ -47,7 +50,8 @@ else
     arch_name=$(uname -m)
 fi
 
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+version=${MDER_VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}
+short=$(echo "$version" | cut -d. -f1-2)
 app="$out/mder.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
@@ -111,7 +115,7 @@ echo "Built $app"
 
 if [ "$zip" = yes ]; then
     mkdir -p dist
-    zip_path="dist/mder-$version-macos-$arch_name.zip"
+    zip_path="dist/mder$short-mac-$arch_name.zip"
     rm -f "$zip_path"
     # ditto keeps the bundle intact, as Finder's own Compress does.
     ditto -c -k --keepParent "$app" "$zip_path"

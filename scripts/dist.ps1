@@ -1,9 +1,15 @@
-# Builds a release of mder and packs it into dist\, which git ignores.
+# Builds a release of mder and packs it into dist\, which git ignores: the
+# files in dist\mder\, and the download, a 7-Zip self-extractor named for
+# the version's first two parts and the processor, such as
+# dist\mder0.2-windows-x64.exe or -arm64.exe. The updater runs that same
+# file with `-y -o<mder's folder>`.
 #
-#   pwsh scripts\dist.ps1                 # build, then dist\mder\ and a zip
+#   pwsh scripts\dist.ps1                 # build and pack
 #   pwsh scripts\dist.ps1 -Install C:\tools\mder   # also copy it there
 #
-# Finds CMake and Ninja from Visual Studio when they aren't on the PATH.
+# Set MDER_VERSION to build and name it as another version, for testing the
+# updater. Finds CMake and Ninja from Visual Studio when they aren't on the
+# PATH, and 7-Zip in Program Files when it isn't either.
 param([string]$Install)
 
 $ErrorActionPreference = 'Stop'
@@ -24,16 +30,27 @@ foreach ($tool in 'cmake', 'ninja') {
 cargo build --release
 if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
 
-$version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+$version = $env:MDER_VERSION
+if (-not $version) {
+    $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+}
+$short = ($version -split '\.')[0..1] -join '.'
 $out = Join-Path $root 'dist\mder'
 Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $out | Out-Null
 Copy-Item target\release\mder.exe, README.md, LICENSE-MIT.txt, LICENSE-APACHE.txt, NOTICE.txt $out
 
-$zip = Join-Path $root "dist\mder-$version-windows-x64.zip"
-Remove-Item $zip -ErrorAction SilentlyContinue
-Compress-Archive -Path "$out\*" -DestinationPath $zip
-"Built $zip ($([math]::Round((Get-Item "$out\mder.exe").Length / 1MB, 1)) MB exe)"
+$sevenZip = (Get-Command 7z -ErrorAction SilentlyContinue).Source
+if (-not $sevenZip) { $sevenZip = "$env:ProgramFiles\7-Zip\7z.exe" }
+$sfxModule = Join-Path (Split-Path $sevenZip) '7z.sfx'
+if (-not (Test-Path $sfxModule)) { throw "7-Zip's 7z.sfx wasn't found next to $sevenZip." }
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+$sfx = Join-Path $root "dist\mder$short-windows-$arch.exe"
+Remove-Item $sfx -ErrorAction SilentlyContinue
+# The files go at the top of the archive, so they unpack straight into mder's folder.
+& $sevenZip a "-sfx$sfxModule" -mx=9 $sfx "$out\*" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw '7-Zip failed' }
+"Built $sfx, version $version ($([math]::Round((Get-Item $sfx).Length / 1MB, 1)) MB)"
 
 if ($Install) {
     New-Item -ItemType Directory -Force $Install | Out-Null
