@@ -28,4 +28,4 @@ With the editor and the web view in separate native windows, NVDA switches clean
 ## Not tested yet
 
 - Other screen readers. JAWS and Narrator should follow `focus()` the same way, but nobody has checked how they handle Enter on a block.
-- WebKit on Linux and macOS, with Orca and VoiceOver.
+- WebKit on Linux and macOS: now tested, with different results. See [orca-findings.md](orca-findings.md) and [voiceover-findings.md](voiceover-findings.md).
