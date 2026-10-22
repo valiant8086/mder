@@ -5,9 +5,12 @@ on:
     branches: [master]
   pull_request:
 
+# Every job has a time limit, so a stuck step fails instead of running for
+# GitHub's default six hours.
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -22,6 +25,7 @@ jobs:
   # into one that runs on both. The Intel half runs under Rosetta here.
   macos:
     runs-on: macos-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -40,19 +44,25 @@ jobs:
       - run: scripts/macos-app.sh --universal
       - name: Start each half of the app
         run: |
-          scripts/macos-smoke-test.sh target/universal/release/mder.app/Contents/MacOS/mder arm64
-          scripts/macos-smoke-test.sh target/universal/release/mder.app/Contents/MacOS/mder x86_64
+          scripts/smoke-test.sh target/universal/release/mder.app/Contents/MacOS/mder arm64
+          scripts/smoke-test.sh target/universal/release/mder.app/Contents/MacOS/mder x86_64
 
   # Built on the oldest Ubuntu mder supports, so what it builds runs there
   # and on anything newer, for PCs and for ARM machines such as a Raspberry Pi.
   linux:
     strategy:
+      # One build failing doesn't cancel the others, so each says how it did.
+      fail-fast: false
       matrix:
         runner: [ubuntu-22.04, ubuntu-22.04-arm]
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - name: Install the build packages (the README's list)
+        timeout-minutes: 30
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build pkg-config libclang-dev \

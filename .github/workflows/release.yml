@@ -1,37 +1,88 @@
-# Pushing a tag like v0.1.0 builds mder for Windows and macOS, and publishes
-# a GitHub release with the Windows self-extractor and the Mac zip.
+# Pushing a tag like v0.2.0 builds every download, checks each one starts,
+# and publishes a GitHub release with them, its notes written from
+# changelog.json. Nothing is published unless every build passes.
+#
+# It can also be run by hand from the Actions tab: then it builds and checks
+# everything, and keeps the files with the run, but publishes nothing.
 name: Release
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+
+# Every job has a time limit, so a stuck step fails instead of running for
+# GitHub's default six hours.
 
 permissions:
   contents: write
 
 jobs:
+  # The tag, Cargo.toml and changelog.json's newest entry must agree.
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: The version is the same everywhere
+        run: |
+          cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "${GITHUB_REF_NAME#v}" != "$cargo" ]; then
+            echo "The tag is $GITHUB_REF_NAME, but Cargo.toml says $cargo."
+            exit 1
+          fi
+          python3 scripts/release-notes.py "$cargo" > /dev/null
+
   windows:
-    runs-on: windows-latest
+    needs: check
+    strategy:
+      # One build failing doesn't cancel the others, so each says how it did.
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Make sure Ninja is available
+      - name: Put Visual Studio's CMake and Ninja on the PATH
         shell: pwsh
-        run: if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja -y }
+        run: |
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+            $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+            $dir = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake'
+            "$dir\CMake\bin" >> $env:GITHUB_PATH
+            "$dir\Ninja" >> $env:GITHUB_PATH
+          }
+      - name: Make sure 7-Zip is available
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:ProgramFiles\7-Zip\7z.sfx")) {
+            choco install 7zip -y
+          }
       - run: cargo test
       - name: Build the self-extractor
         shell: pwsh
         run: ./scripts/dist.ps1
+      - name: Start it
+        shell: bash
+        run: scripts/smoke-test.sh dist/mder/mder.exe
       - uses: actions/upload-artifact@v4
         with:
-          name: windows
+          name: windows-${{ matrix.arch }}
           path: dist/mder*.exe
 
   # One app for Apple silicon and Intel. It's signed for no one in
   # particular, so people allow it once in System Settings, Privacy &
   # Security, "Open Anyway".
   macos:
+    needs: check
     runs-on: macos-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -50,22 +101,71 @@ jobs:
         run: scripts/macos-app.sh --universal --zip
       - name: Start each half of the app
         run: |
-          scripts/macos-smoke-test.sh target/universal/release/mder.app/Contents/MacOS/mder arm64
-          scripts/macos-smoke-test.sh target/universal/release/mder.app/Contents/MacOS/mder x86_64
+          scripts/smoke-test.sh target/universal/release/mder.app/Contents/MacOS/mder arm64
+          scripts/smoke-test.sh target/universal/release/mder.app/Contents/MacOS/mder x86_64
       - uses: actions/upload-artifact@v4
         with:
           name: macos
           path: dist/*.zip
 
-  publish:
-    needs: [windows, macos]
-    runs-on: ubuntu-latest
+  # Built on the oldest Ubuntu mder supports, so it runs there and on
+  # anything newer, for PCs and for ARM machines such as a Raspberry Pi.
+  linux:
+    needs: check
+    strategy:
+      # One build failing doesn't cancel the others, so each says how it did.
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x64
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     steps:
+      - uses: actions/checkout@v4
+      - name: Install the build packages (the README's list), and a virtual screen
+        timeout-minutes: 30
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config libclang-dev \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libssl-dev libpng-dev libjpeg-dev libtiff-dev \
+            libexpat1-dev libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev xvfb dbus-x11
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+      - name: Build the tarball
+        run: scripts/linux-pack.sh
+      - name: Start it, on the virtual screen
+        run: dbus-run-session -- xvfb-run -a scripts/smoke-test.sh dist/linux/mder/mder
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/*.tar.gz
+
+  # A draft first, then published once every file is on it, so "latest",
+  # which mder's updater reads, never points at a release still being made.
+  publish:
+    if: github.ref_type == 'tag'
+    needs: [windows, macos, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      - name: Write the notes, and add the changelog for the updater
+        run: |
+          python3 scripts/release-notes.py "$GITHUB_REF_NAME" > notes.md
+          cp changelog.json dist/
+          ls -l dist
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/*.exe dist/*.zip --repo "${{ github.repository }}" --title "mder ${{ github.ref_name }}" --generate-notes
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --draft --title "mder ${GITHUB_REF_NAME#v}" --notes-file notes.md
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest

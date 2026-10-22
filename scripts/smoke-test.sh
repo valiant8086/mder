@@ -2,18 +2,20 @@
 # Checks that mder starts and renders: opens README.md, waits for the
 # rendered view to load, then quits. For CI, where nobody is watching.
 #
-#   scripts/macos-smoke-test.sh PROGRAM [ARCH]
+#   scripts/smoke-test.sh PROGRAM [ARCH]
 #
-# PROGRAM is mder's program, such as target/universal/release/mder.app/Contents/MacOS/mder.
-# ARCH (arm64 or x86_64) runs that half of a universal program; x86_64 on
-# Apple silicon needs Rosetta.
+# PROGRAM is mder's program: target/universal/release/mder.app/Contents/MacOS/mder
+# on the Mac, dist/linux/mder/mder on Linux, dist/mder/mder.exe on Windows
+# (run from Git Bash). Linux needs a display: run it under xvfb-run.
+# ARCH (arm64 or x86_64) is for the Mac: it runs that half of a universal
+# program; x86_64 on Apple silicon needs Rosetta.
 set -eu
 
 cd "$(dirname "$0")/.."
 
 program=$1
 arch=${2:-}
-log=$(mktemp -t mder-smoke)
+log=$(mktemp "${TMPDIR:-/tmp}/mder-smoke.XXXXXX")
 file="$PWD/README.md"
 
 if [ -n "$arch" ]; then

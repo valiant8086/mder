@@ -40,10 +40,15 @@ Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $out | Out-Null
 Copy-Item target\release\mder.exe, README.md, LICENSE-MIT.txt, LICENSE-APACHE.txt, NOTICE.txt $out
 
-$sevenZip = (Get-Command 7z -ErrorAction SilentlyContinue).Source
-if (-not $sevenZip) { $sevenZip = "$env:ProgramFiles\7-Zip\7z.exe" }
-$sfxModule = Join-Path (Split-Path $sevenZip) '7z.sfx'
-if (-not (Test-Path $sfxModule)) { throw "7-Zip's 7z.sfx wasn't found next to $sevenZip." }
+# 7-Zip's own folder, where 7z.sfx is too. A 7z found on the PATH may be a
+# package manager's shortcut, with no 7z.sfx beside it.
+$onPath = (Get-Command 7z -ErrorAction SilentlyContinue).Source
+$sevenZipDir = @("$env:ProgramFiles\7-Zip", "${env:ProgramFiles(x86)}\7-Zip", $(if ($onPath) { Split-Path $onPath })) |
+    Where-Object { $_ -and (Test-Path "$_\7z.exe") -and (Test-Path "$_\7z.sfx") } |
+    Select-Object -First 1
+if (-not $sevenZipDir) { throw "7-Zip wasn't found, with its 7z.sfx: install 7-Zip." }
+$sevenZip = "$sevenZipDir\7z.exe"
+$sfxModule = "$sevenZipDir\7z.sfx"
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
 $sfx = Join-Path $root "dist\mder$short-windows-$arch.exe"
 Remove-Item $sfx -ErrorAction SilentlyContinue
