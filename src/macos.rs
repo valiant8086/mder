@@ -88,6 +88,29 @@ fn responds_to(object: Id, selector: &CStr) -> bool {
     !object.is_null() && unsafe { send1::<Id, bool>(object, c"respondsToSelector:", sel_registerName(selector.as_ptr())) }
 }
 
+/// Stops macOS changing what you type in the editor: smart quotes and
+/// dashes, your text replacements, spelling autocorrection, and the spaces
+/// it adds or removes around pasted words. They're on by default in a Mac
+/// text view, and they changed markdown behind your back: straight quotes
+/// turned curly, in code too. `editor` is the text control's handle, the
+/// scroll view around the text view. Spelling is still underlined.
+pub fn plain_text_editor(editor: Id) {
+    let text_view = if responds_to(editor, c"documentView") { unsafe { send0(editor, c"documentView") } } else { editor };
+    for setting in [
+        c"setAutomaticQuoteSubstitutionEnabled:",
+        c"setAutomaticDashSubstitutionEnabled:",
+        c"setAutomaticTextReplacementEnabled:",
+        c"setAutomaticSpellingCorrectionEnabled:",
+        c"setSmartInsertDeleteEnabled:",
+        c"setAutomaticLinkDetectionEnabled:",
+        c"setAutomaticDataDetectionEnabled:",
+    ] {
+        if responds_to(text_view, setting) {
+            unsafe { send1::<bool, ()>(text_view, setting, false) };
+        }
+    }
+}
+
 /// Brings mder in front of other apps. Since macOS 14, that only works if
 /// the active app has let it: see `yield_to_mder`.
 pub fn activate() {

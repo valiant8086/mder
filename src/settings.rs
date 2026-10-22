@@ -45,13 +45,30 @@ pub struct Settings {
     /// macOS: the app that opened each file type by default before mder
     /// took over, by type identifier, so unchecking can give it back.
     pub previous_defaults: BTreeMap<String, String>,
+    /// Look for a new version once a day.
+    pub check_for_updates: bool,
+    /// When mder last heard from the update server, in seconds since 1970.
+    pub last_update_check: u64,
+    /// A version you chose Ignore Version for: the daily check skips it.
+    pub ignored_version: String,
+    /// For testing: a folder of release files to update from instead of
+    /// GitHub. Only set by hand.
+    pub update_source: Option<String>,
 }
 
 const PREVIOUS_DEFAULT: &str = "previous_default.";
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { start_pane: Pane::View, location_pane: Pane::View, previous_defaults: BTreeMap::new() }
+        Settings {
+            start_pane: Pane::View,
+            location_pane: Pane::View,
+            previous_defaults: BTreeMap::new(),
+            check_for_updates: true,
+            last_update_check: 0,
+            ignored_version: String::new(),
+            update_source: None,
+        }
     }
 }
 
@@ -72,6 +89,10 @@ impl Settings {
             match key.trim() {
                 "start_pane" => settings.start_pane = Pane::parse(value).unwrap_or(settings.start_pane),
                 "location_pane" => settings.location_pane = Pane::parse(value).unwrap_or(settings.location_pane),
+                "check_for_updates" => settings.check_for_updates = value.trim() != "no",
+                "last_update_check" => settings.last_update_check = value.trim().parse().unwrap_or(0),
+                "ignored_version" => settings.ignored_version = value.trim().to_string(),
+                "update_source" => settings.update_source = Some(value.trim().to_string()).filter(|s| !s.is_empty()),
                 key => {
                     if let Some(file_type) = key.strip_prefix(PREVIOUS_DEFAULT) {
                         settings.previous_defaults.insert(file_type.to_string(), value.trim().to_string());
@@ -103,10 +124,21 @@ impl Settings {
              # Where a file opens with no location: view or editor.\n\
              start_pane={}\n\
              # Where a file opens when a command gives a location: view or editor.\n\
-             location_pane={}\n",
+             location_pane={}\n\
+             # Look for a new version once a day: yes or no.\n\
+             check_for_updates={}\n\
+             # When mder last checked, and a version you chose to ignore.\n\
+             last_update_check={}\n\
+             ignored_version={}\n",
             self.start_pane.as_str(),
-            self.location_pane.as_str()
+            self.location_pane.as_str(),
+            if self.check_for_updates { "yes" } else { "no" },
+            self.last_update_check,
+            self.ignored_version,
         );
+        if let Some(source) = &self.update_source {
+            text.push_str(&format!("# For testing: where to look for updates instead of GitHub.\nupdate_source={source}\n"));
+        }
         if !self.previous_defaults.is_empty() {
             text.push_str("# macOS: the app each file type goes back to when mder stops being its default.\n");
             for (file_type, app) in &self.previous_defaults {
@@ -159,7 +191,14 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        let mut s = Settings { start_pane: Pane::Editor, ..Settings::default() };
+        let mut s = Settings {
+            start_pane: Pane::Editor,
+            check_for_updates: false,
+            last_update_check: 1_792_000_000,
+            ignored_version: "0.2.0".into(),
+            update_source: Some("http://192.168.0.10:8086/".into()),
+            ..Settings::default()
+        };
         s.previous_defaults.insert("net.daringfireball.markdown".into(), "/System/Applications/TextEdit.app".into());
         s.previous_defaults.insert("dyn.ah62d4rv4ge80445e".into(), "/Applications/Some App.app".into());
         assert_eq!(Settings::parse(&s.to_text()), s);

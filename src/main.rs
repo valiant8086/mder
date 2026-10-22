@@ -11,11 +11,15 @@ mod macos;
 mod options_dialog;
 mod render;
 mod settings;
+mod update;
+mod update_ui;
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant, SystemTime};
 
 use wxdragon::event::WebViewEvents;
@@ -28,6 +32,7 @@ use settings::{Pane, Settings};
 
 const ID_SAVE: i32 = 1001;
 const ID_SWITCH: i32 = 2001;
+const ID_CHECK_UPDATES: i32 = 2002;
 // Standard IDs: on macOS, wxWidgets moves these into the app menu, as About
 // mder, Quit mder, and Settings (Cmd+Comma). Elsewhere they stay where they are.
 const ID_EXIT: i32 = wxdragon::id::ID_EXIT;
@@ -49,6 +54,9 @@ const PAGE_CSS: &str = include_str!("page/page.css");
 
 /// How often to look at the file on disk for outside changes.
 const DISK_POLL_MS: i32 = 1000;
+/// How soon after a window opens the daily update check may still show
+/// what it found. See poll_update_check.
+const UPDATE_OFFER_WINDOW: Duration = Duration::from_secs(20);
 
 /// What a window opened with no file shows.
 const SAMPLE: &str = "# Welcome to mder
@@ -101,6 +109,20 @@ fn debug_log(msg: &str) {
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "[{}] {msg}", std::process::id());
     }
+}
+
+/// Where two texts first differ, for the debug log: the character
+/// position, a little of each from there, and both lengths.
+fn first_difference(a: &str, b: &str) -> String {
+    let at = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
+    let from = |s: &str| s.chars().skip(at).take(12).collect::<String>();
+    format!(
+        "from character {at}, editor {:?} but file {:?}; lengths {} and {}",
+        from(a),
+        from(b),
+        a.chars().count(),
+        b.chars().count()
+    )
 }
 
 /// Modification time and size, to notice outside changes cheaply.
@@ -171,6 +193,14 @@ struct App {
     /// the launch being acted on. Used once.
     #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
     activation_token: Option<String>,
+    /// When this window opened: an update installed after that, by any
+    /// window, restarts this one on the new version.
+    opened: SystemTime,
+    /// The daily update check, while it's running.
+    update_check: Option<Receiver<Result<Vec<update::Entry>, String>>>,
+    /// mder was updated, and this window restarts on the new version once
+    /// its edits are saved.
+    restart_when_saved: bool,
 }
 
 impl App {
@@ -291,6 +321,9 @@ impl App {
                 self.doc.saved = text;
                 self.doc.stamp = stamp_of(&path);
                 self.frame.set_status_text("Saved", 0);
+                if self.restart_when_saved {
+                    self.restart();
+                }
             }
             Err(e) => self.frame.set_status_text(&format!("Save failed: {e}"), 0),
         }
@@ -308,7 +341,7 @@ impl App {
         if text == self.doc.saved {
             return;
         }
-        let dirty = self.editor.get_value() != self.doc.saved;
+        let dirty = self.is_dirty();
         debug_log(&format!("file changed on disk, dirty={dirty}"));
         if dirty {
             let answer = MessageDialog::builder(
@@ -328,6 +361,166 @@ impl App {
         self.replace_text(&text);
         self.update_render();
         self.frame.set_status_text("Reloaded from disk", 0);
+    }
+
+    fn is_dirty(&self) -> bool {
+        let text = self.editor.get_value();
+        let dirty = text != self.doc.saved;
+        if dirty {
+            debug_log(&format!("unsaved edits: {}", first_difference(&text, &self.doc.saved)));
+        }
+        dirty
+    }
+
+    /// Help, Check for updates.
+    fn check_for_updates(&mut self) {
+        if let Some(offer) = update_ui::check_now(&self.frame) {
+            self.offer_update(&offer);
+        }
+    }
+
+    /// Picks up the daily check's answer. It's only shown soon after the
+    /// window opens: later, a dialog would interrupt your typing, so it's
+    /// dropped, and the next window to open checks again.
+    fn poll_update_check(&mut self) {
+        let Some(receiver) = &self.update_check else { return };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                self.update_check = None;
+                return;
+            }
+        };
+        self.update_check = None;
+        let late = self.opened.elapsed().is_ok_and(|age| age > UPDATE_OFFER_WINDOW);
+        debug_log(&format!("daily update check answered; late={late}"));
+        if !late && let Some(offer) = update_ui::daily_result(result) {
+            self.offer_update(&offer);
+        }
+    }
+
+    fn offer_update(&mut self, offer: &update_ui::Offer) {
+        match update_ui::ask(&self.frame, offer, self.opened) {
+            update_ui::Choice::Install => {
+                if self.ready_to_restart() && update_ui::download_and_install(&self.frame, offer) {
+                    self.restart();
+                }
+            }
+            update_ui::Choice::InstalledElsewhere => self.notice_update_elsewhere(),
+            update_ui::Choice::Ignore | update_ui::Choice::Later => {}
+        }
+    }
+
+    /// mder restarts to finish an update; this deals with unsaved edits
+    /// first. False if you'd rather not update now.
+    fn ready_to_restart(&mut self) -> bool {
+        if !self.is_dirty() {
+            return true;
+        }
+        if self.doc.path.is_none() {
+            let answer = MessageDialog::builder(
+                &self.frame,
+                "mder restarts to finish updating, and this untitled document can't be saved yet. Update anyway, and lose it?",
+                "mder update",
+            )
+            .with_style(MessageDialogStyle::YesNo | MessageDialogStyle::NoDefault | MessageDialogStyle::IconWarning)
+            .build()
+            .show_modal();
+            return answer == ID_YES;
+        }
+        let answer = MessageDialog::builder(
+            &self.frame,
+            &format!("mder restarts to finish updating. Save your changes to {} first?", self.doc.name()),
+            "mder update",
+        )
+        .with_style(MessageDialogStyle::YesNo | MessageDialogStyle::Cancel | MessageDialogStyle::IconQuestion)
+        .build()
+        .show_modal();
+        match answer {
+            ID_YES => {
+                self.save();
+                !self.is_dirty()
+            }
+            ID_NO => true,
+            _ => false,
+        }
+    }
+
+    /// Starts the new version on this window's file, in the same pane and
+    /// at the same line, then quits.
+    fn restart(&mut self) {
+        let pane = self.current_pane();
+        // In the rendered view, the page's caret if it has one: Orca moves
+        // it as you read, as for F6.
+        let page_line = || self.view.run_script("caretLine()").and_then(|l| l.trim_matches('"').parse::<i64>().ok());
+        let line = if pane == Pane::View { page_line() } else { None }.unwrap_or_else(|| self.caret_line());
+        let mut args: Vec<OsString> = vec![if pane == Pane::Editor { "--edit" } else { "--view" }.into()];
+        if let Some(path) = &self.doc.path {
+            args.extend(["--line".into(), line.to_string().into(), path.clone().into_os_string()]);
+        }
+        debug_log(&format!("restarting on the new version: {args:?}"));
+        // Let go of the file first, or the new window would hand it back to this one.
+        self._claim = None;
+        match update::relaunch(&args) {
+            Ok(()) => std::process::exit(0),
+            Err(e) => {
+                MessageDialog::builder(
+                    &self.frame,
+                    &format!("The new version is installed, but mder couldn't start it ({e}). Close mder and start it again."),
+                    "mder update",
+                )
+                .with_style(MessageDialogStyle::OK | MessageDialogStyle::IconWarning)
+                .build()
+                .show_modal();
+            }
+        }
+    }
+
+    /// Restarts this window on the new version when another window updated
+    /// mder. With unsaved edits, it asks first: save and restart now, or
+    /// restart at the next save.
+    fn notice_update_elsewhere(&mut self) {
+        if self.restart_when_saved || !update::updated_since(self.opened) {
+            return;
+        }
+        if !self.is_dirty() {
+            self.restart();
+            return;
+        }
+        // Asked once; from here, saving restarts this window.
+        self.restart_when_saved = true;
+        let version = update::updated_to().map_or(String::new(), |v| format!(" to version {v}"));
+        if self.doc.path.is_none() {
+            MessageDialog::builder(
+                &self.frame,
+                &format!(
+                    "mder was updated{version} in another window. This window stays on the old version until you close it, since its untitled document can't be saved yet."
+                ),
+                "mder update",
+            )
+            .with_style(MessageDialogStyle::OK | MessageDialogStyle::IconInformation)
+            .build()
+            .show_modal();
+            return;
+        }
+        let answer = MessageDialog::builder(
+            &self.frame,
+            &format!(
+                "mder was updated{version} in another window. Save your changes to {} and restart on the new version now?\n\nIf not, this window restarts the next time you save.",
+                self.doc.name()
+            ),
+            "mder update",
+        )
+        .with_style(MessageDialogStyle::YesNo | MessageDialogStyle::IconQuestion)
+        .build()
+        .show_modal();
+        if answer == ID_YES {
+            // Saving restarts it.
+            self.save();
+        } else {
+            self.frame.set_status_text("mder was updated. This window restarts on the new version when you save.", 0);
+        }
     }
 
     /// Replaces the editor's text, keeping the caret where it was.
@@ -637,13 +830,6 @@ mod finder {
     }
 }
 
-/// An update renames the running exe to `mder.exe.old` before putting the
-/// new one in place. Delete it once nothing is running it any more.
-fn remove_replaced_exe() {
-    if let Ok(exe) = std::env::current_exe() {
-        let _ = std::fs::remove_file(exe.with_extension("exe.old"));
-    }
-}
 
 /// Runs `--register` or `--unregister`, reports the result in a message box, and exits.
 fn run_command(command: args::Command) -> ! {
@@ -664,7 +850,8 @@ fn run_command(command: args::Command) -> ! {
 }
 
 fn main() {
-    remove_replaced_exe();
+    // Notes where mder is, and deletes the copy an update set aside.
+    update::start();
     #[allow(unused_mut)]
     let mut launch = args::parse(std::env::args_os().skip(1));
     // Read before GTK starts, which takes it out of the environment.
@@ -756,6 +943,7 @@ fn open_window(path: Option<PathBuf>, target: Target) {
         .append_item(ID_SWITCH, "&Switch pane\tF6", "Move between the editor and the rendered view")
         .build();
     let help_menu = Menu::builder()
+        .append_item(ID_CHECK_UPDATES, "Check for &updates...", "Look for a new version of mder")
         .append_item(ID_ABOUT, "&About mder", "Version, credits and license")
         .build();
     // On macOS, Options goes in a menu only for wxWidgets to move it to
@@ -774,6 +962,8 @@ fn open_window(path: Option<PathBuf>, target: Target) {
     let editor = TextCtrl::builder(&splitter)
         .with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::DontWrap | TextCtrlStyle::ProcessTab)
         .build();
+    #[cfg(target_os = "macos")]
+    macos::plain_text_editor(editor.get_handle());
     let backend = if WebView::is_backend_available(WebViewBackend::Edge) {
         WebViewBackend::Edge
     } else {
@@ -804,6 +994,9 @@ fn open_window(path: Option<PathBuf>, target: Target) {
         focus_timer: None,
         last_pane: Pane::Editor,
         activation_token: None,
+        opened: SystemTime::now(),
+        update_check: None,
+        restart_when_saved: false,
     }));
 
     // Re-render shortly after typing stops.
@@ -826,7 +1019,9 @@ fn open_window(path: Option<PathBuf>, target: Target) {
         });
     }
 
-    // Watch the file, and catch any handed-over targets the idle event missed.
+    // Watch the file, and catch any handed-over targets the idle event
+    // missed. Also collects the daily update check's answer, and notices
+    // when another window has updated mder.
     let disk_timer = Timer::new(&frame);
     {
         let app = app.clone();
@@ -834,6 +1029,8 @@ fn open_window(path: Option<PathBuf>, target: Target) {
             with_app(&app, |app| {
                 app.check_disk();
                 app.run_targets();
+                app.poll_update_check();
+                app.notice_update_elsewhere();
             })
         });
     }
@@ -947,6 +1144,7 @@ fn open_window(path: Option<PathBuf>, target: Target) {
             ID_SAVE => with_app(&app, |app| app.save()),
             ID_EXIT => with_app(&app, |app| app.frame.close(true)),
             ID_SWITCH => with_app(&app, |app| app.switch()),
+            ID_CHECK_UPDATES => with_app(&app, |app| app.check_for_updates()),
             ID_OPTIONS => {
                 // Not inside with_app: the dialog's own event loop runs
                 // mder's timers, which need the app.
@@ -982,4 +1180,5 @@ fn open_window(path: Option<PathBuf>, target: Target) {
     frame.show(true);
     frame.centre();
     editor.set_focus();
+    app.borrow_mut().update_check = update_ui::start_daily_check();
 }

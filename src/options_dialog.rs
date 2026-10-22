@@ -220,6 +220,7 @@ struct GeneralPage {
     dialog: Dialog,
     start: RadioBox,
     at_location: RadioBox,
+    check_for_updates: CheckBox,
 }
 
 /// The radio buttons' choices, in order.
@@ -264,6 +265,8 @@ impl GeneralPage {
         let sizer = BoxSizer::builder(Orientation::Vertical).build();
         let start = radio_box(page, &sizer, "When opening a file, start in:");
         let at_location = radio_box(page, &sizer, "When a command opens a file at a location, start in:");
+        let check_for_updates = CheckBox::builder(page).with_label("Check for &updates once a day").build();
+        sizer.add(&check_for_updates, 0, SizerFlag::All, 8);
         let note = StaticText::builder(page)
             .with_label("--edit or --view on the command line overrides these for that launch. A file that's already open stays in the pane you're in.")
             .build();
@@ -274,7 +277,8 @@ impl GeneralPage {
         let settings = Settings::load();
         start.set_selection(pane_index(settings.start_pane));
         at_location.set_selection(pane_index(settings.location_pane));
-        GeneralPage { dialog, start, at_location }
+        check_for_updates.set_value(settings.check_for_updates);
+        GeneralPage { dialog, start, at_location, check_for_updates }
     }
 
     /// Saves the choices. Returns false if that failed.
@@ -283,6 +287,7 @@ impl GeneralPage {
         let settings = Settings {
             start_pane: pane_at(self.start.get_selection()),
             location_pane: pane_at(self.at_location.get_selection()),
+            check_for_updates: self.check_for_updates.is_checked(),
             ..Settings::load()
         };
         match settings.save() {
