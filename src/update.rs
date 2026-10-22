@@ -247,8 +247,9 @@ pub fn can_replace_itself() -> bool {
     ok
 }
 
-/// The name a replaced program is renamed to: "mder.exe.old", or with a
-/// number if an older one is still in use by another window.
+/// Renames a replaced program (or mder.app) to its name plus ".old", such as
+/// "mder.exe.old", or with a number if an older one is still in use by
+/// another window. Returns the new name.
 fn set_aside(path: &Path) -> Result<PathBuf, String> {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     for n in 0..100 {

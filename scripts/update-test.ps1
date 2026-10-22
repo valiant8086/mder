@@ -3,8 +3,8 @@
 #   <Folder>\app\      an "old" mder, set to look for updates at the test server
 #   <Folder>\server\   a "new" release: its self-extractor and changelog.json
 #
-#   pwsh scripts\update-test.ps1 -Folder C:\code\mder\update-test
-#   python -m http.server 8086 --bind 127.0.0.1 --directory C:\code\mder\update-test\server
+#   pwsh scripts\update-test.ps1 -Folder C:\temp\mder-update-test
+#   python -m http.server 8086 --bind 127.0.0.1 --directory C:\temp\mder-update-test\server
 #
 # Then run <Folder>\app\mder.exe on a file and choose Help, Check for updates.
 # The server only answers this machine; -Source gives another address, for

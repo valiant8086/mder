@@ -1,15 +1,15 @@
 //! Markdown to HTML, with every block tagged by the source line it starts on.
 //!
-//! Blocks get `data-line="N"` (1-based). The page uses it two ways: Enter on a
-//! block reports its line to the editor, and the editor asks the page to
-//! focus the block for the caret's line.
+//! Blocks get `data-line="N"` (1-based). The page uses it two ways: a click
+//! or Enter on a block reports its line to the editor, and the editor asks
+//! the page to focus the block for the caret's line.
 //!
 //! Headings also get GitHub-style anchors as their `id`, for links within the
 //! document, the same ones `--anchor` takes.
 //!
 //! The leading text of a list item is wrapped in `<span class="li-text">`.
-//! The page focuses that span instead of the `<li>`: a focusable list item
-//! makes NVDA switch to focus mode.
+//! Except on Linux, the page focuses that span instead of the `<li>`: a
+//! focusable list item makes NVDA switch to focus mode.
 
 use pulldown_cmark::{CowStr, Event, Options, Parser, Tag, TagEnd, html};
 

@@ -44,8 +44,8 @@ pub struct FileKind {
     #[cfg_attr(not(windows), allow(dead_code))]
     pub type_name: &'static str,
     pub extensions: &'static [&'static str],
-    /// For Linux desktop files.
-    #[allow(dead_code)]
+    /// The MIME types for Linux desktop files.
+    #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
     pub mime: &'static [&'static str],
 }
 
@@ -59,12 +59,13 @@ pub const KINDS: &[FileKind] = &[FileKind {
 
 /// One checkbox. On Windows, one extension. On macOS, one file type as the
 /// system sees it right now, which may cover several extensions: .md and
-/// .markdown are both "Markdown document" there.
+/// .markdown are both "Markdown document" there. On Linux, a whole kind.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item {
     /// What the box says, such as ".md and .markdown".
     pub label: String,
-    /// The extension on Windows, the type's identifier on macOS.
+    /// The extension on Windows, the type's identifier on macOS, the kind's
+    /// MIME types on Linux.
     pub key: String,
     pub extensions: Vec<&'static str>,
 }

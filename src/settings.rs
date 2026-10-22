@@ -196,7 +196,7 @@ mod tests {
             check_for_updates: false,
             last_update_check: 1_792_000_000,
             ignored_version: "0.2.0".into(),
-            update_source: Some("http://192.168.0.10:8086/".into()),
+            update_source: Some("http://localhost:8086/".into()),
             ..Settings::default()
         };
         s.previous_defaults.insert("net.daringfireball.markdown".into(), "/System/Applications/TextEdit.app".into());

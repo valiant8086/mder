@@ -1,5 +1,5 @@
 //! Tools, Options (Settings, in the app menu on macOS). Two tabs so far:
-//! - General: which pane a file opens in.
+//! - General: which pane a file opens in, and the daily update check.
 //! - Integration: which file types offer mder in the system's Open with
 //!   menu, or on macOS, which ones open in mder on double-click.
 
@@ -104,8 +104,9 @@ const PAGE_FOCUS_DELAY_MS: i32 = 50;
 
 /// Control+Tab and Control+Shift+Tab move to the next and previous tab, from
 /// anywhere in the dialog, then into that tab's first control. Windows' tab
-/// control does this itself; macOS's doesn't. On the Mac, Command+Shift+]
-/// and [ work too, as they do for tabs in Safari and Finder.
+/// control does this itself. macOS's doesn't, and GTK's moves focus out of
+/// the tabs instead. On the Mac, Command+Shift+] and [ work too, as they do
+/// for tabs in Safari and Finder.
 #[cfg(not(windows))]
 fn switch_tabs_by_keyboard(dialog: &Dialog, notebook: Notebook) -> TabKeys {
     let focus_page = move || {

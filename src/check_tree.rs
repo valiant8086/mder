@@ -3,10 +3,11 @@
 //! when only some of its leaves are checked.
 //!
 //! Windows gets the native tree view with its own checkboxes, which NVDA reads
-//! best. The Mac gets wxTreeListCtrl, which is the system's own tree there.
-//! See checkable-tree-findings.md in C:\code\wxdragon UI experiments. On
-//! Linux, GTK doesn't pass wxTreeListCtrl's labels to screen readers, so Orca
-//! hears nameless rows; there it's plain checkboxes instead.
+//! best: it says each item's checked, half checked or unchecked state, and
+//! whether a branch is collapsed. The Mac gets wxTreeListCtrl, which is the
+//! system's own tree there. On Linux, GTK doesn't pass wxTreeListCtrl's
+//! labels to screen readers, so Orca hears nameless rows; there it's plain
+//! checkboxes instead.
 
 #[cfg(windows)]
 pub use native::CheckTree;

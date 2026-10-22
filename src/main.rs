@@ -250,10 +250,9 @@ impl App {
         self.view.set_focus();
     }
 
-    /// Focuses the block for the caret's line inside the page. The page
-    /// focuses an empty element first, so NVDA never sees the move as focus
-    /// returning to the element it last saw, which it would ignore.
-    /// See plans\focus-timing.md.
+    /// Focuses the block for the caret's line inside the page, moving the
+    /// screen reader there. How differs for NVDA and Orca: see
+    /// `moveReaderTo` in page.js.
     fn focus_render_block(&self) {
         let line = self.caret_line();
         let result = self.view.run_script(&format!("mderFocusLine({line})"));
@@ -629,9 +628,10 @@ impl App {
         }
     }
 
-    /// Moves the screen reader to the caret's block once Windows says the
-    /// window is active, so NVDA sees the move live. This was the only
-    /// approach that moved NVDA every time; see plans\focus-timing.md.
+    /// Moves the screen reader to the caret's block once the window is
+    /// active. NVDA ignores a move made while the window is still coming
+    /// forward; waiting for the activate event was the only approach that
+    /// moved it every time. Not used on the Mac: see `bring_forward_then`.
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     fn move_reader_when_active(&mut self) {
         if self.active {
@@ -666,7 +666,8 @@ impl App {
     /// Opens the menu bar, as Alt or F10 would, or with a letter, the menu it
     /// stands for, as Alt plus that letter would. For the rendered view,
     /// which keeps those keys to itself. Posted rather than sent, so the menu
-    /// opens after this event and its commands can reach the app.
+    /// opens after this event and its commands can reach the app. Only the
+    /// page on Windows asks for it; see `forwardMenuKeys` in page.js.
     fn open_menu(&self, letter: Option<char>) {
         #[cfg(windows)]
         {
@@ -829,7 +830,6 @@ mod finder {
         }
     }
 }
-
 
 /// Runs `--register` or `--unregister`, reports the result in a message box, and exits.
 fn run_command(command: args::Command) -> ! {

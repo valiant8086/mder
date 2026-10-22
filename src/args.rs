@@ -83,7 +83,8 @@ pub struct Launch {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Command {
-    /// Add mder to the Open with list for markdown files.
+    /// Register mder for every file type it opens, as Options' Integration
+    /// tab would with every box checked (see integration/mod.rs).
     Register,
     Unregister,
 }

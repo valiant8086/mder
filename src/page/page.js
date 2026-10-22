@@ -80,7 +80,7 @@ if (orca) {
   hoistNestedLists(doc);
   writeMarkers(doc);
 }
-// How long the app's own focus news gets to reach Orca first. See mderFocusLine.
+// How long the app's own focus news gets to reach Orca first. See moveReaderTo.
 const ORCA_SETTLE_MS = 150;
 
 // An empty element that can be focused just before the target. NVDA ignores
@@ -175,7 +175,8 @@ function moveReaderTo(block) {
   return `${where}, page has focus: ${document.hasFocus()}, focused: ${document.activeElement === target}`;
 }
 
-// Called by the app after an edit: patch the DOM in place so NVDA keeps its place.
+// Called by the app after an edit: patch the DOM in place so the screen
+// reader keeps its place.
 window.mderUpdate = (html) => {
   const next = document.createElement("div");
   next.innerHTML = html;
@@ -208,7 +209,8 @@ function syncAttributes(c, n) {
   }
 }
 
-// Enter in browse mode clicks the block under NVDA's cursor: edit that line.
+// A click on a block edits its line: NVDA's Enter in browse mode, VoiceOver's
+// VO+Space, and the mouse all click the block. (Orca's Enter is below.)
 document.addEventListener("click", (e) => {
   const link = e.target.closest("a[href]");
   if (link) {
@@ -253,10 +255,11 @@ function caretLine() {
 }
 
 // The app's keys never reach it while the web view has focus: its menu
-// shortcuts, and even Alt for the menu bar. Pass them on. On Linux, keys
-// the page doesn't use go back to the window, which opens its own menus, so
-// the menu keys are left alone there.
-const forwardMenuKeys = !orca;
+// shortcuts, and even Alt for the menu bar. Pass them on. Only Windows
+// needs the menu keys passed on: on Linux, keys the page doesn't use go back
+// to the window, which opens its own menus, and the Mac doesn't open menus
+// with F10 or Option.
+const forwardMenuKeys = /^Win/.test(navigator.platform);
 let altAlone = false;
 document.addEventListener("keydown", (e) => {
   if (e.key === "Alt") {
