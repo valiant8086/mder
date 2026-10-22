@@ -125,6 +125,9 @@ fn read_entry() -> Option<Entry> {
     Some(Entry { exe, mime })
 }
 
+/// StartupNotify makes the file manager give each launch an activation
+/// token, which a window that already has the file needs to come forward on
+/// Wayland (see `crate::linux::activate_with_token`).
 fn desktop_entry(exe: &Path, types: &BTreeSet<String>) -> String {
     let mime: String = types.iter().map(|m| format!("{m};")).collect();
     format!(
@@ -135,6 +138,7 @@ fn desktop_entry(exe: &Path, types: &BTreeSet<String>) -> String {
          Comment=Edit and read markdown, made for screen readers\n\
          Exec={} %f\n\
          Terminal=false\n\
+         StartupNotify=true\n\
          Categories=Utility;TextEditor;\n\
          MimeType={mime}\n",
         quote_exec(&exe.to_string_lossy())

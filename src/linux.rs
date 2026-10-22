@@ -1,16 +1,20 @@
 //! The few Linux things wxDragon has no call for, asked of GTK and X11
 //! directly.
 
-use std::ffi::{c_char, c_int, c_long, c_ulong, c_void};
+use std::ffi::{CString, c_char, c_int, c_long, c_ulong, c_void};
 
 #[link(name = "gtk-3")]
 unsafe extern "C" {
     fn gtk_widget_get_window(widget: *mut c_void) -> *mut c_void;
+    fn gtk_window_present(window: *mut c_void);
 }
 
 #[link(name = "gdk-3")]
 unsafe extern "C" {
     fn gdk_window_get_display(window: *mut c_void) -> *mut c_void;
+    fn gdk_wayland_display_get_type() -> usize;
+    fn gdk_wayland_display_set_startup_notification_id(display: *mut c_void, id: *const c_char);
+    fn gdk_notify_startup_complete_with_id(id: *const c_char);
     fn gdk_x11_display_get_type() -> usize;
     fn gdk_x11_display_get_xdisplay(display: *mut c_void) -> *mut c_void;
     fn gdk_x11_window_get_xid(window: *mut c_void) -> c_ulong;
@@ -86,6 +90,41 @@ pub fn activate(widget: *mut c_void) -> bool {
         };
         XSendEvent(xdisplay, XDefaultRootWindow(xdisplay), 0, SUBSTRUCTURE_NOTIFY | SUBSTRUCTURE_REDIRECT, &mut event);
         XFlush(xdisplay);
+    }
+    true
+}
+
+/// Tells an X11 desktop that a launch is done starting. A launch that hands
+/// its file to another window quits without a window of its own, so that
+/// window says it for it; otherwise the desktop waits for it a while.
+pub fn startup_complete(id: &str) {
+    if let Ok(id) = CString::new(id) {
+        unsafe { gdk_notify_startup_complete_with_id(id.as_ptr()) };
+    }
+}
+
+/// Brings a window to the front on Wayland, which only allows it with an
+/// activation token: the file manager gives one to each launch, and the
+/// launch that found the file already open passes it on. GTK presents the
+/// window with it, through the xdg-activation protocol. Returns whether it
+/// could try; whether the desktop honors the token, it doesn't say.
+pub fn activate_with_token(widget: *mut c_void, token: &str) -> bool {
+    let Ok(token) = CString::new(token) else { return false };
+    if widget.is_null() {
+        return false;
+    }
+    unsafe {
+        let window = gtk_widget_get_window(widget);
+        if window.is_null() {
+            return false;
+        }
+        let display = gdk_window_get_display(window);
+        if display.is_null() || g_type_check_instance_is_a(display, gdk_wayland_display_get_type()) == 0 {
+            return false;
+        }
+        // GTK uses the display's startup id for the next present, then forgets it.
+        gdk_wayland_display_set_startup_notification_id(display, token.as_ptr());
+        gtk_window_present(widget);
     }
     true
 }

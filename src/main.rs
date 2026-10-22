@@ -167,6 +167,10 @@ struct App {
     /// The pane that last got focus, kept as focus moves: when the window
     /// stops being active, GTK has already taken focus from both panes.
     last_pane: Pane,
+    /// Linux on Wayland: the token for bringing the window forward, from
+    /// the launch being acted on. Used once.
+    #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+    activation_token: Option<String>,
 }
 
 impl App {
@@ -199,7 +203,8 @@ impl App {
     /// never reach the page, and Orca doesn't treat it as web content. So
     /// there, focus WebKit's own view, and only that: going through the
     /// wrapper first makes Orca say "scroll pane".
-    fn focus_view(&self) {
+    fn focus_view(&mut self) {
+        self.last_pane = Pane::View;
         #[cfg(all(unix, not(target_os = "macos")))]
         {
             #[link(name = "gtk-3")]
@@ -230,6 +235,13 @@ impl App {
         if let Some(line) = line {
             self.set_caret_line(line);
         }
+        self.focus_editor();
+    }
+
+    /// Records the pane as well: on GTK, the editor gets no focus event when
+    /// focus comes back from the page, which wxWidgets never saw leave.
+    fn focus_editor(&mut self) {
+        self.last_pane = Pane::Editor;
         self.editor.set_focus();
     }
 
@@ -370,12 +382,13 @@ impl App {
             None => current,
         };
         debug_log(&format!("pane {pane:?} (was {current:?}), line {line:?}"));
+        self.activation_token = target.activation_token.clone();
         if let Some(line) = line {
             self.set_caret_line(line as i64);
         }
         match pane {
             Pane::Editor => {
-                self.bring_forward_then(|app| app.editor.set_focus());
+                self.bring_forward_then(|app| app.focus_editor());
             }
             Pane::View => {
                 // Move the screen reader when there's somewhere to go, or
@@ -396,6 +409,12 @@ impl App {
                     app.focus_view();
                     if move_reader {
                         app.move_reader_when_active();
+                    } else {
+                        // Orca only reads the page after a focus event inside
+                        // it, which coming forward doesn't make, so it's put
+                        // back where you were reading. Elsewhere, a no-op.
+                        let result = app.view.run_script("mderRestoreReader()");
+                        debug_log(&format!("came forward over the rendered view: {result:?}"));
                     }
                 });
             }
@@ -471,19 +490,34 @@ impl App {
         let _ = letter;
     }
 
-    fn bring_forward(&self) {
+    fn bring_forward(&mut self) {
         if self.frame.is_iconized() {
             self.frame.iconize(false);
         }
         self.frame.raise();
         // raise() only orders mder's own windows; on macOS the app has to
         // come in front of other apps too, and on Linux the window manager
-        // has to be asked the way a taskbar would.
+        // has to be asked the way a taskbar would, or on Wayland, shown the
+        // launch's activation token.
         #[cfg(target_os = "macos")]
         macos::activate();
         #[cfg(all(unix, not(target_os = "macos")))]
-        if !linux::activate(self.frame.get_handle()) {
-            debug_log("couldn't ask the window manager to bring the window forward (not X11)");
+        {
+            let window = self.frame.get_handle();
+            let token = self.activation_token.take();
+            if linux::activate(window) {
+                if let Some(token) = token {
+                    linux::startup_complete(&token);
+                }
+            } else {
+                match token {
+                    Some(token) if linux::activate_with_token(window, &token) => {
+                        debug_log("asked Wayland to bring the window forward, with the launch's token");
+                    }
+                    Some(_) => debug_log("couldn't bring the window forward with the activation token"),
+                    None => debug_log("couldn't bring the window forward: not X11, and the launch had no activation token"),
+                }
+            }
         }
         debug_log("brought the window forward");
     }
@@ -631,7 +665,15 @@ fn run_command(command: args::Command) -> ! {
 
 fn main() {
     remove_replaced_exe();
-    let launch = args::parse(std::env::args_os().skip(1));
+    #[allow(unused_mut)]
+    let mut launch = args::parse(std::env::args_os().skip(1));
+    // Read before GTK starts, which takes it out of the environment.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        launch.target.activation_token = ["XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID"]
+            .iter()
+            .find_map(|name| std::env::var(name).ok().filter(|t| !t.is_empty()));
+    }
     if let Some(log) = &launch.target.log {
         start_logging(log);
         debug_log(&format!("started: {:?} {:?}", launch.path, launch.target));
@@ -761,6 +803,7 @@ fn open_window(path: Option<PathBuf>, target: Target) {
         waiting_for_active: false,
         focus_timer: None,
         last_pane: Pane::Editor,
+        activation_token: None,
     }));
 
     // Re-render shortly after typing stops.

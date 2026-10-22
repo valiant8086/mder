@@ -20,6 +20,10 @@ pub struct Target {
     /// Write a debug log to this file. It travels with the target so that a
     /// window that already has the file can start logging too.
     pub log: Option<PathBuf>,
+    /// Linux on Wayland: the token this launch was given for bringing a
+    /// window forward. A window that already has the file needs it to come
+    /// forward, since Wayland won't let a window just take the front.
+    pub activation_token: Option<String>,
 }
 
 impl Target {
@@ -45,6 +49,9 @@ impl Target {
         if let Some(log) = &self.log {
             out.push_str(&format!("log={}\n", escape(&log.to_string_lossy())));
         }
+        if let Some(token) = &self.activation_token {
+            out.push_str(&format!("activation={}\n", escape(token)));
+        }
         out
     }
 
@@ -58,6 +65,7 @@ impl Target {
                 "find" => t.find = Some(unescape(value)),
                 "pane" => t.pane = Pane::parse(value),
                 "log" => t.log = Some(PathBuf::from(unescape(value))),
+                "activation" => t.activation_token = Some(unescape(value)),
                 _ => {}
             }
         }
@@ -207,6 +215,7 @@ mod tests {
             pane: Some(Pane::Editor),
             fresh: false,
             log: Some(PathBuf::from(r"C:\logs\mder.log")),
+            activation_token: Some("a1b2_c3".into()),
         };
         assert_eq!(Target::decode(&t.encode()), t);
     }
