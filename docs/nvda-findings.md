@@ -25,7 +25,14 @@ A web page can't see NVDA's browse mode cursor directly. These are the results o
 
 With the editor and the web view in separate native windows, NVDA switches cleanly: it leaves browse mode when focus moves to the edit control, and comes back to browse mode in the web view. Editors that put the source and the preview in one web document, such as VS Code, can leave NVDA stuck in browse mode instead.
 
+## JAWS and Narrator
+
+Both follow `focus()` too: F6 from the editor puts them on the right block of the rendered view.
+
+- **JAWS** reads the right line, after saying a lot about the document first.
+- **Narrator** reads the right line straight away, but doesn't turn scan mode on or off by itself when moving between mder's editor and rendered view: toggle it with Caps Lock+Space. And with scan mode on, H (next heading) starts from the top of the page rather than from where you are. So Narrator works only roughly with mder for now.
+
 ## Not tested yet
 
-- Other screen readers. JAWS and Narrator should follow `focus()` the same way, but nobody has checked how they handle Enter on a block.
+- How JAWS and Narrator handle Enter on a block.
 - WebKit on Linux and macOS: now tested, with different results. See [orca-findings.md](orca-findings.md) and [voiceover-findings.md](voiceover-findings.md).

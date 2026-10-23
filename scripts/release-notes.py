@@ -34,7 +34,9 @@ def main() -> int:
         "## Which file do I download?",
         "",
         f"- **Windows:** `mder{version}-windows-x64.exe`, or `mder{version}-windows-arm64.exe` for Windows on ARM. "
-        "It's a self-extractor: run it and choose a folder for mder. mder needs the WebView2 runtime, "
+        "It's a self-extractor: run it and choose a folder for mder. mder isn't signed, so the first time, "
+        "your browser may say the file isn't commonly downloaded (choose Keep), and SmartScreen may say "
+        "\"Windows protected your PC\" (choose More info, then Run anyway). mder needs the WebView2 runtime, "
         "which comes with Windows 11, and with Windows 10 through Windows Update.",
         f"- **Mac:** `mder{version}-mac-universal.zip`, for Apple silicon and Intel Macs, macOS 12 or later. "
         "Move mder.app where you want to keep it, such as Applications, before opening it. "
