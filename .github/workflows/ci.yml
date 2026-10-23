@@ -9,7 +9,9 @@ on:
 # GitHub's default six hours.
 jobs:
   # PCs and Windows on ARM. The release builds don't run the tests, so
-  # every download's tests run here.
+  # every download's tests run here. Only the tests: the release workflow
+  # builds the release. The build cache drops wxWidgets' build folder, which
+  # holds WebView2LoaderStatic.lib; build.rs lets mder link without it.
   windows:
     strategy:
       # One build failing doesn't cancel the others, so each says how it did.
@@ -32,7 +34,6 @@ jobs:
             "$dir\Ninja" >> $env:GITHUB_PATH
           }
       - run: cargo test
-      - run: cargo build --release
 
   # An Apple silicon machine builds both halves of the app, and joins them
   # into one that runs on both. The Intel half runs under Rosetta here.

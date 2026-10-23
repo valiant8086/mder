@@ -1,7 +1,7 @@
-//! Sets mder's version, and embeds a Windows manifest: current common
+//! Sets mder's version, and on Windows embeds a manifest: current common
 //! controls (needed for the tree view's half-checked boxes and visual
 //! styles), per-monitor DPI awareness, UTF-8 as the code page, and long path
-//! support.
+//! support. Also lets Windows builds link from a build cache (see below).
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -25,5 +25,13 @@ fn main() {
         if let Err(e) = embed_manifest(manifest) {
             println!("cargo:warning=Couldn't embed the Windows manifest: {e}");
         }
+    }
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        // wxWidgets' web view asks the linker for WebView2LoaderStatic.lib by
+        // name, but wxdragon-sys already packs that library into its own
+        // .rlib. The file itself is in wxWidgets' build folder, which a build
+        // cache (CI's) doesn't keep, so the by-name request would fail the
+        // link.
+        println!("cargo:rustc-link-arg=/NODEFAULTLIB:WebView2LoaderStatic.lib");
     }
 }

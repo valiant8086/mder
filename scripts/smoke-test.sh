@@ -26,6 +26,11 @@ fi
 pid=$!
 
 finish() {
+    # On Windows, mder outlived Git Bash's kill on GitHub's machines, so
+    # Windows' own taskkill closes it there too.
+    if [ -r "/proc/$pid/winpid" ]; then
+        taskkill //F //PID "$(cat "/proc/$pid/winpid")" > /dev/null 2>&1 || true
+    fi
     kill "$pid" 2>/dev/null || true
     echo "--- mder's log:"
     cat "$log"
