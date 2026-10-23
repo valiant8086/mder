@@ -8,16 +8,29 @@ on:
 # Every job has a time limit, so a stuck step fails instead of running for
 # GitHub's default six hours.
 jobs:
+  # PCs and Windows on ARM. The release builds don't run the tests, so
+  # every download's tests run here.
   windows:
-    runs-on: windows-latest
+    strategy:
+      # One build failing doesn't cancel the others, so each says how it did.
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Make sure Ninja is available
+      - name: Put Visual Studio's CMake and Ninja on the PATH
         shell: pwsh
-        run: if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja -y }
+        run: |
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+            $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+            $dir = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake'
+            "$dir\CMake\bin" >> $env:GITHUB_PATH
+            "$dir\Ninja" >> $env:GITHUB_PATH
+          }
       - run: cargo test
       - run: cargo build --release
 
@@ -27,7 +40,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
@@ -58,7 +71,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the build packages (the README's list)
         timeout-minutes: 30
         env:

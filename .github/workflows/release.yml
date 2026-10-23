@@ -2,6 +2,10 @@
 # and publishes a GitHub release with them, its notes written from
 # changelog.json. Nothing is published unless every build passes.
 #
+# It doesn't run the tests itself: it requires the regular checks (ci.yml)
+# to have passed for the same commit, and builds each download only once,
+# from scratch.
+#
 # It can also be run by hand from the Actions tab: then it builds and checks
 # everything, and keeps the files with the run, but publishes nothing.
 name: Release
@@ -16,14 +20,17 @@ on:
 
 permissions:
   contents: write
+  # To read the regular checks' results.
+  actions: read
 
 jobs:
-  # The tag, Cargo.toml and changelog.json's newest entry must agree.
+  # The regular checks passed for this commit, and the tag, Cargo.toml and
+  # changelog.json's newest entry agree.
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: The version is the same everywhere
         run: |
           cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -32,6 +39,20 @@ jobs:
             exit 1
           fi
           python3 scripts/release-notes.py "$cargo" > /dev/null
+      - name: The regular checks passed for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -z "$run" ]; then
+            echo "The regular checks haven't run for $GITHUB_SHA: push the commit, then tag it."
+            exit 1
+          fi
+          # If they're still running, wait for them.
+          if ! gh run watch "$run" -R "$GITHUB_REPOSITORY" --exit-status --interval 60 > /dev/null; then
+            echo "The regular checks failed for this commit: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run"
+            exit 1
+          fi
 
   windows:
     needs: check
@@ -47,7 +68,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Put Visual Studio's CMake and Ninja on the PATH
         shell: pwsh
@@ -64,14 +85,13 @@ jobs:
           if (-not (Test-Path "$env:ProgramFiles\7-Zip\7z.sfx")) {
             choco install 7zip -y
           }
-      - run: cargo test
       - name: Build the self-extractor
         shell: pwsh
         run: ./scripts/dist.ps1
       - name: Start it
         shell: bash
         run: scripts/smoke-test.sh dist/mder/mder.exe
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-${{ matrix.arch }}
           path: dist/mder*.exe
@@ -84,7 +104,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
@@ -92,18 +112,15 @@ jobs:
         run: |
           command -v cmake || brew install cmake
           command -v ninja || brew install ninja
-      - name: Install Rosetta, to run Intel code
+      - name: Install Rosetta, to start the Intel half
         run: sudo softwareupdate --install-rosetta --agree-to-license
-      - run: cargo test
-      - name: Test the Intel build, under Rosetta
-        run: cargo test --target x86_64-apple-darwin
       - name: Build the release zip
         run: scripts/macos-app.sh --universal --zip
       - name: Start each half of the app
         run: |
           scripts/smoke-test.sh target/universal/release/mder.app/Contents/MacOS/mder arm64
           scripts/smoke-test.sh target/universal/release/mder.app/Contents/MacOS/mder x86_64
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: dist/*.zip
@@ -124,7 +141,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install the build packages (the README's list), and a virtual screen
         timeout-minutes: 30
         env:
@@ -135,12 +152,11 @@ jobs:
             libgtk-3-dev libwebkit2gtk-4.1-dev libssl-dev libpng-dev libjpeg-dev libtiff-dev \
             libexpat1-dev libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev xvfb dbus-x11
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test
       - name: Build the tarball
         run: scripts/linux-pack.sh
       - name: Start it, on the virtual screen
         run: dbus-run-session -- xvfb-run -a scripts/smoke-test.sh dist/linux/mder/mder
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.arch }}
           path: dist/*.tar.gz
@@ -153,8 +169,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
