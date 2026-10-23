@@ -24,17 +24,20 @@ permissions:
   actions: read
 
 jobs:
-  # The regular checks passed for this commit, and the tag, Cargo.toml and
-  # changelog.json's newest entry agree.
+  # The regular checks passed for this commit, and for a release, the tag,
+  # Cargo.toml and changelog.json's newest entry agree.
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
+      # Only for a release: between releases, the build count moves
+      # Cargo.toml's version past the changelog's newest entry.
       - name: The version is the same everywhere
+        if: github.ref_type == 'tag'
         run: |
           cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          if [ "$GITHUB_REF_TYPE" = tag ] && [ "${GITHUB_REF_NAME#v}" != "$cargo" ]; then
+          if [ "${GITHUB_REF_NAME#v}" != "$cargo" ]; then
             echo "The tag is $GITHUB_REF_NAME, but Cargo.toml says $cargo."
             exit 1
           fi

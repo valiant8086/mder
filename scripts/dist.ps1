@@ -1,7 +1,7 @@
 # Builds a release of mder and packs it into dist\, which git ignores: the
 # files in dist\mder\, and the download, a 7-Zip self-extractor named for
-# the version's first two parts and the processor, such as
-# dist\mder0.2-windows-x64.exe or -arm64.exe. The updater runs that same
+# the whole version and the processor, such as
+# dist\mder0.2.44-windows-x64.exe or -arm64.exe. The updater runs that same
 # file with `-y -o<mder's folder>`.
 #
 #   pwsh scripts\dist.ps1                 # build and pack
@@ -34,7 +34,6 @@ $version = $env:MDER_VERSION
 if (-not $version) {
     $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
 }
-$short = ($version -split '\.')[0..1] -join '.'
 $out = Join-Path $root 'dist\mder'
 Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $out | Out-Null
@@ -50,7 +49,7 @@ if (-not $sevenZipDir) { throw "7-Zip wasn't found, with its 7z.sfx: install 7-Z
 $sevenZip = "$sevenZipDir\7z.exe"
 $sfxModule = "$sevenZipDir\7z.sfx"
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
-$sfx = Join-Path $root "dist\mder$short-windows-$arch.exe"
+$sfx = Join-Path $root "dist\mder$version-windows-$arch.exe"
 Remove-Item $sfx -ErrorAction SilentlyContinue
 # The files go at the top of the archive, so they unpack straight into mder's folder.
 & $sevenZip a "-sfx$sfxModule" -mx=9 $sfx "$out\*" | Out-Null

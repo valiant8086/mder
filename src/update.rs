@@ -103,17 +103,16 @@ pub fn changes_text(entries: &[Entry], current: &str, latest: &str) -> String {
     text
 }
 
-/// This system's download for `version`, named as scripts/dist.ps1,
-/// macos-app.sh and linux-pack.sh name it.
+/// This system's download for `version`, named with the whole version as
+/// scripts/dist.ps1, macos-app.sh and linux-pack.sh name it.
 pub fn asset_name(version: &str) -> String {
-    let short = version.split('.').take(2).collect::<Vec<_>>().join(".");
     let chip = if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" };
     if cfg!(windows) {
-        format!("mder{short}-windows-{chip}.exe")
+        format!("mder{version}-windows-{chip}.exe")
     } else if cfg!(target_os = "macos") {
-        format!("mder{short}-mac-universal.zip")
+        format!("mder{version}-mac-universal.zip")
     } else {
-        format!("mder{short}-linux-{chip}.tar.gz")
+        format!("mder{version}-linux-{chip}.tar.gz")
     }
 }
 
@@ -472,7 +471,7 @@ mod tests {
     #[test]
     fn names_downloads_like_the_packing_scripts() {
         let name = asset_name("0.2.1");
-        assert!(name.starts_with("mder0.2-"), "{name}");
+        assert!(name.starts_with("mder0.2.1-"), "{name}");
         assert_eq!(
             download_url(None, "0.2.1"),
             format!("https://github.com/valiant8086/mder/releases/download/v0.2.1/{name}")

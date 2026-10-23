@@ -22,7 +22,6 @@ def main() -> int:
         print(f"changelog.json's newest entry is {newest}, not {version}", file=sys.stderr)
         return 1
     entry = entries[0]
-    short = ".".join(version.split(".")[:2])
 
     lines = []
     if entry.get("blurb"):
@@ -34,14 +33,14 @@ def main() -> int:
     lines += [
         "## Which file do I download?",
         "",
-        f"- **Windows:** `mder{short}-windows-x64.exe`, or `mder{short}-windows-arm64.exe` for Windows on ARM. "
+        f"- **Windows:** `mder{version}-windows-x64.exe`, or `mder{version}-windows-arm64.exe` for Windows on ARM. "
         "It's a self-extractor: run it and choose a folder for mder. mder needs the WebView2 runtime, "
         "which comes with Windows 11, and with Windows 10 through Windows Update.",
-        f"- **Mac:** `mder{short}-mac-universal.zip`, for Apple silicon and Intel Macs, macOS 12 or later. "
+        f"- **Mac:** `mder{version}-mac-universal.zip`, for Apple silicon and Intel Macs, macOS 12 or later. "
         "Move mder.app where you want to keep it, such as Applications, before opening it. "
         "mder isn't signed by Apple, so the first time, macOS refuses to open it: go to System Settings, "
         "Privacy & Security, and choose \"Open Anyway\".",
-        f"- **Linux:** `mder{short}-linux-x64.tar.gz`, or `mder{short}-linux-arm64.tar.gz` for ARM machines "
+        f"- **Linux:** `mder{version}-linux-x64.tar.gz`, or `mder{version}-linux-arm64.tar.gz` for ARM machines "
         "such as a Raspberry Pi with a 64-bit system. It needs GTK 3 and WebKitGTK 4.1.",
         "",
         "Once installed, mder can update itself: Help, Check for updates. "

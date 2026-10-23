@@ -18,19 +18,18 @@ folder=$1
 source=${2:-http://127.0.0.1:8086/}
 old=${OLD_VERSION:-0.1.0}
 new=${NEW_VERSION:-0.1.1}
-short() { echo "$1" | cut -d. -f1-2; }
 
 MDER_VERSION=$old scripts/linux-pack.sh
 rm -rf "$folder/app"
 mkdir -p "$folder"
-tar -xzf "dist/mder$(short "$old")-linux-"*.tar.gz -C "$folder"
+tar -xzf "dist/mder$old-linux-"*.tar.gz -C "$folder"
 mv "$folder/mder" "$folder/app"
 # Due for a daily check straight away, and pointed at the test server.
 printf 'check_for_updates=yes\nlast_update_check=0\nupdate_source=%s\n' "$source" > "$folder/app/mder.ini"
 
 MDER_VERSION=$new scripts/linux-pack.sh
 mkdir -p "$folder/server"
-cp "dist/mder$(short "$new")-linux-"*.tar.gz "$folder/server/"
+cp "dist/mder$new-linux-"*.tar.gz "$folder/server/"
 
 # The repo's changelog, with the test version on top.
 python3 - "$new" "$folder/server/changelog.json" <<'PY'

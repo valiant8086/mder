@@ -20,7 +20,6 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $app = Join-Path $Folder 'app'
 $server = Join-Path $Folder 'server'
-$short = { param($v) ($v -split '\.')[0..1] -join '.' }
 
 try {
     $env:MDER_VERSION = $OldVersion
@@ -35,7 +34,7 @@ try {
     & "$PSScriptRoot\dist.ps1"
     Remove-Item $server -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force $server | Out-Null
-    Copy-Item "$root\dist\mder$(& $short $NewVersion)-windows-*.exe" $server
+    Copy-Item "$root\dist\mder$NewVersion-windows-*.exe" $server
 } finally {
     Remove-Item Env:MDER_VERSION -ErrorAction SilentlyContinue
 }

@@ -28,16 +28,16 @@ If another program changes a file that mder has open, it reloads both panes with
 
 ## Getting it
 
-Download the latest from the GitHub [releases page](https://github.com/valiant8086/mder/releases/latest). The file names start with the version, such as `mder0.1`, then say which system and processor they're for.
+Download the latest from the GitHub [releases page](https://github.com/valiant8086/mder/releases/latest). The file names start with the version, such as `mder0.1.5`, then say which system and processor they're for.
 
-- On Windows, mder ships as a 7-Zip self-extracting exe (an SFX), such as `mder0.1-windows-x64.exe`, or `-arm64` for Windows on ARM. mder is a portable exe; nothing gets installed, though it writes to the registry if you choose to add it to Explorer's Open with menu (see [Open with](#open-with)).
+- On Windows, mder ships as a 7-Zip self-extracting exe (an SFX), such as `mder0.1.5-windows-x64.exe`, or `-arm64` for Windows on ARM. mder is a portable exe; nothing gets installed, though it writes to the registry if you choose to add it to Explorer's Open with menu (see [Open with](#open-with)).
   - Make a folder just for mder, such as `C:\Tools\mder`. The files unpack straight into the folder you choose, not into a folder of their own.
   - The easy way: copy the SFX into that folder and run it there. It offers its own folder, so just press Enter. You can delete the SFX afterwards.
   - Or run it from wherever you downloaded it, and choose mder's folder when it asks.
   - Then run `mder.exe` in that folder.
   - mder needs the WebView2 runtime, which comes with Windows 11, and with Windows 10 through Windows Update.
-- On Mac, mder is a universal build that works on both Intel and Apple silicon Macs, and ships as a zip, `mder0.1-mac-universal.zip`. That should be familiar territory: inside it is mder.app. Move it where you want to keep it, such as Applications, before opening it; otherwise macOS runs it from a hidden temporary copy. mder isn't signed by Apple, so the first time you open it, macOS refuses: go to System Settings, Privacy & Security, find the message saying mder was blocked, and choose "Open Anyway". After that it opens normally. It needs macOS 12 or later.
-- On Linux, mder ships as a tarball, such as `mder0.1-linux-x64.tar.gz` for most PCs, or `-arm64` for ARM machines such as a Raspberry Pi running a 64-bit system. Unpack it with your file manager (usually Extract Here in its context menu), or in a terminal with `tar -xzf mder0.1-linux-x64.tar.gz`. Either way you get a folder named `mder`; move it where you want to keep it, such as your home folder, and run the `mder` program inside it. mder uses your system's GTK 3 and WebKitGTK 4.1, which most desktops already have. If not, on Debian or Ubuntu, install them with `sudo apt install libgtk-3-0t64 libwebkit2gtk-4.1-0` (on releases before 2024, the first package is called `libgtk-3-0`). Tested on Debian 13 with MATE and Orca 48, and on Ubuntu 26.04 with GNOME and Orca 50.
+- On Mac, mder is a universal build that works on both Intel and Apple silicon Macs, and ships as a zip, `mder0.1.5-mac-universal.zip`. That should be familiar territory: inside it is mder.app. Move it where you want to keep it, such as Applications, before opening it; otherwise macOS runs it from a hidden temporary copy. mder isn't signed by Apple, so the first time you open it, macOS refuses: go to System Settings, Privacy & Security, find the message saying mder was blocked, and choose "Open Anyway". After that it opens normally. It needs macOS 12 or later.
+- On Linux, mder ships as a tarball, such as `mder0.1.5-linux-x64.tar.gz` for most PCs, or `-arm64` for ARM machines such as a Raspberry Pi running a 64-bit system. Unpack it with your file manager (usually Extract Here in its context menu), or in a terminal with `tar -xzf mder0.1.5-linux-x64.tar.gz`. Either way you get a folder named `mder`; move it where you want to keep it, such as your home folder, and run the `mder` program inside it. mder uses your system's GTK 3 and WebKitGTK 4.1, which most desktops already have. If not, on Debian or Ubuntu, install them with `sudo apt install libgtk-3-0t64 libwebkit2gtk-4.1-0` (on releases before 2024, the first package is called `libgtk-3-0`). Tested on Debian 13 with MATE and Orca 48, and on Ubuntu 26.04 with GNOME and Orca 50.
 
 To offer mder when you open markdown files from Explorer (or your Linux file manager), use Tools, Options, or run `mder --register` once. See [Open with](#open-with) below.
 
@@ -127,9 +127,11 @@ You need Rust, and on Windows the Visual Studio C++ build tools with CMake and N
 cargo build --release
 ```
 
-`scripts\dist.ps1` does a release build and packs it with the licenses into `dist\mder0.1-windows-x64.exe`, a 7-Zip self-extractor (it needs 7-Zip installed). It finds CMake and Ninja from Visual Studio if they aren't on the PATH. Add `-Install C:\some\folder` to copy the result there too.
+`scripts\dist.ps1` does a release build and packs it with the licenses into `dist\mder0.1.5-windows-x64.exe`, a 7-Zip self-extractor (it needs 7-Zip installed). It finds CMake and Ninja from Visual Studio if they aren't on the PATH. Add `-Install C:\some\folder` to copy the result there too.
 
 Pushing a tag like `v0.1.0` makes GitHub build and publish a release.
+
+If you send a change, please leave the version in Cargo.toml as it is. Its last number counts the maintainer's builds, and goes up when they build your change.
 
 ### macOS
 
@@ -149,7 +151,7 @@ Tested on Debian 13 with the MATE desktop (X11) and Ubuntu 26.04 with the GNOME 
 build-essential cmake ninja-build pkg-config libclang-dev libgtk-3-dev libwebkit2gtk-4.1-dev libssl-dev libpng-dev libjpeg-dev libtiff-dev libexpat1-dev libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev
 ```
 
-Then `cargo build --release`, and run `target/release/mder`. The first build takes a few minutes while it builds wxWidgets. `scripts/linux-pack.sh` builds it and packs the download, `dist/mder0.1-linux-x64.tar.gz`.
+Then `cargo build --release`, and run `target/release/mder`. The first build takes a few minutes while it builds wxWidgets. `scripts/linux-pack.sh` builds it and packs the download, `dist/mder0.1.5-linux-x64.tar.gz`.
 
 ## How mder is made
 
