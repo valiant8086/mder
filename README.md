@@ -28,7 +28,7 @@ If another program changes a file that mder has open, it reloads both panes with
 
 ## Getting it
 
-Download the latest from the GitHub [releases page](https://github.com/valiant8086/mder/releases/latest). The file names start with the version, such as `mder0.1.5`, then say which system and processor they're for.
+Download the latest version from [mder's page](https://valiant8086.com/applications/mder/) on valiant8086.com, or from the [releases page](https://github.com/valiant8086/mder/releases/latest) on GitHub. Both have the same files. The file names start with the version, such as `mder0.1.5`, then say which system and processor they're for.
 
 - On Windows, mder ships as a 7-Zip self-extracting exe (an SFX), such as `mder0.1.5-windows-x64.exe`, or `-arm64` for Windows on ARM. mder is a portable exe; nothing gets installed, though it writes to the registry if you choose to add it to Explorer's Open with menu (see [Open with](#open-with)).
   - Make a folder just for mder, such as `C:\Tools\mder`. The files unpack straight into the folder you choose, not into a folder of their own.
@@ -118,6 +118,8 @@ mder checks for a new version when it launches, no more than once a day. If ther
 You can also check any time with Help > Check for update, and turn the daily check off in Tools > Options on the General tab (mder > Settings on the Mac).
 
 Install Now downloads the new version, puts it in place of the old one, and restarts mder on the same file, in the same pane. Every other open mder window restarts on the new version too; one with unsaved changes asks first whether to save them. mder replaces itself in its own folder, so that needs to be a folder you can write to; if it isn't, mder offers to open the download page instead. Updates come from mder's GitHub releases. On the Mac, updating should not cause mder to be blocked from running again.
+
+Every version's changes are on [mder's changelog page](https://valiant8086.com/applications/mder/changelog.html).
 
 ## Building
 
