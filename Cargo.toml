@@ -1,6 +1,6 @@
 [package]
 name = "mder"
-version = "0.1.4"
+version = "0.1.226"
 edition = "2024"
 description = "A markdown editor and renderer built for screen readers, with the editor and rendered view kept in sync"
 authors = ["valiant8086"]
