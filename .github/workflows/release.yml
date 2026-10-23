@@ -144,13 +144,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install the build packages (the README's list), and a virtual screen
         timeout-minutes: 30
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build pkg-config libclang-dev \
-            libgtk-3-dev libwebkit2gtk-4.1-dev libssl-dev libpng-dev libjpeg-dev libtiff-dev \
-            libexpat1-dev libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev xvfb dbus-x11
+        uses: ./.github/actions/linux-packages
       - uses: dtolnay/rust-toolchain@stable
       - name: Build the tarball
         run: scripts/linux-pack.sh
