@@ -43,7 +43,7 @@ def main() -> int:
         f"- **Linux:** `mder{version}-linux-x64.tar.gz`, or `mder{version}-linux-arm64.tar.gz` for ARM machines "
         "such as a Raspberry Pi with a 64-bit system. It needs GTK 3 and WebKitGTK 4.1.",
         "",
-        "Once installed, mder can update itself: Help, Check for updates. "
+        "Once installed, mder can update itself: Help, Check for update. "
         "The [README](https://github.com/valiant8086/mder#readme) has the details.",
     ]
     print("\n".join(lines))

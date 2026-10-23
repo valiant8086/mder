@@ -301,7 +301,9 @@ pub fn install(downloaded: &Path) -> Result<(), String> {
 fn platform_install(downloaded: &Path, folder: &Path) -> Result<(), String> {
     let exe = exe().ok_or("mder doesn't know where it's running from")?;
     let aside = set_aside(exe)?;
+    crate::debug_log(&format!("unpacking; in front: {}", foreground_process()));
     let result = Command::new(downloaded).arg("-y").arg(format!("-o{}", folder.display())).status();
+    crate::debug_log(&format!("unpacked; in front: {}", foreground_process()));
     match result {
         Ok(status) if status.success() && exe.exists() => Ok(()),
         other => {
@@ -377,16 +379,59 @@ fn run(command: &mut Command, what: &str) -> Result<(), String> {
 }
 
 /// Starts the new version with `args`, such as the file this window had.
-pub fn relaunch(args: &[std::ffi::OsString]) -> std::io::Result<()> {
+/// `behind` (also in `args` as `--behind`) keeps it from coming forward.
+pub fn relaunch(args: &[std::ffi::OsString], behind: bool) -> std::io::Result<()> {
     if cfg!(target_os = "macos") {
         let app = install_location().ok_or_else(|| std::io::Error::other("not running as mder.app"))?;
-        Command::new("open").arg("-n").arg(app).arg("--args").args(args).spawn()?;
+        let mut open = Command::new("open");
+        if behind {
+            // Without activating mder.
+            open.arg("-g");
+        }
+        open.arg("-n").arg(app).arg("--args").args(args).spawn()?;
     } else {
         let exe = exe().ok_or_else(|| std::io::Error::other("mder doesn't know where it's running from"))?;
-        Command::new(exe).args(args).spawn()?;
+        let child = Command::new(exe).args(args).spawn()?;
+        if !behind {
+            allow_foreground(child.id());
+        }
     }
     Ok(())
 }
+
+/// Lets the new version's window come to the front. Windows only lets the
+/// program in front do that, and this one quits as soon as the new one
+/// starts, so it hands its right over. Only the window you installed from
+/// does this; the others restart behind it.
+#[cfg(windows)]
+fn allow_foreground(process_id: u32) {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn AllowSetForegroundWindow(process_id: u32) -> i32;
+    }
+    let allowed = unsafe { AllowSetForegroundWindow(process_id) };
+    crate::debug_log(&format!(
+        "let the new version come forward: {}; in front: {}",
+        allowed != 0,
+        foreground_process()
+    ));
+}
+
+/// Which program is in front, for the log: this one, or another's ID.
+#[cfg(windows)]
+pub fn foreground_process() -> String {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetForegroundWindow() -> *mut std::ffi::c_void;
+        fn GetWindowThreadProcessId(hwnd: *mut std::ffi::c_void, process_id: *mut u32) -> u32;
+    }
+    let mut id = 0;
+    unsafe { GetWindowThreadProcessId(GetForegroundWindow(), &mut id) };
+    if id == std::process::id() { "mder".into() } else { format!("process {id}") }
+}
+
+#[cfg(not(windows))]
+fn allow_foreground(_process_id: u32) {}
 
 /// A note in the temp folder saying this copy of mder was just updated, so
 /// its other windows restart on the new version (see `updated_since`).

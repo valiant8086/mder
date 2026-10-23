@@ -115,7 +115,7 @@ A note on portability: registering is the one part of mder that isn't portable, 
 ## Updates
 
 mder checks for a new version when it launches, no more than once a day. If there is one, it shows what changed since your version, with three choices: Install Now, Ignore Version, and Maybe Later. Ignore Version skips that version and avoids prompting you to update until the next version is out.
-You can also check any time with Help > Check for updates, and turn the daily check off in Tools > Options on the General tab (mder > Settings on the Mac).
+You can also check any time with Help > Check for update, and turn the daily check off in Tools > Options on the General tab (mder > Settings on the Mac).
 
 Install Now downloads the new version, puts it in place of the old one, and restarts mder on the same file, in the same pane. Every other open mder window restarts on the new version too; one with unsaved changes asks first whether to save them. mder replaces itself in its own folder, so that needs to be a folder you can write to; if it isn't, mder offers to open the download page instead. Updates come from mder's GitHub releases. On the Mac, updating should not cause mder to be blocked from running again.
 

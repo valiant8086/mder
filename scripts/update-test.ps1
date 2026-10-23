@@ -6,7 +6,7 @@
 #   pwsh scripts\update-test.ps1 -Folder C:\temp\mder-update-test
 #   python -m http.server 8086 --bind 127.0.0.1 --directory C:\temp\mder-update-test\server
 #
-# Then run <Folder>\app\mder.exe on a file and choose Help, Check for updates.
+# Then run <Folder>\app\mder.exe on a file and choose Help, Check for update.
 # The server only answers this machine; -Source gives another address, for
 # serving the folder to other machines too.
 param(

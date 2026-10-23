@@ -321,7 +321,7 @@ impl App {
                 self.doc.stamp = stamp_of(&path);
                 self.frame.set_status_text("Saved", 0);
                 if self.restart_when_saved {
-                    self.restart();
+                    self.restart(false);
                 }
             }
             Err(e) => self.frame.set_status_text(&format!("Save failed: {e}"), 0),
@@ -371,7 +371,7 @@ impl App {
         dirty
     }
 
-    /// Help, Check for updates.
+    /// Help, Check for update.
     fn check_for_updates(&mut self) {
         if let Some(offer) = update_ui::check_now(&self.frame) {
             self.offer_update(&offer);
@@ -403,7 +403,7 @@ impl App {
         match update_ui::ask(&self.frame, offer, self.opened) {
             update_ui::Choice::Install => {
                 if self.ready_to_restart() && update_ui::download_and_install(&self.frame, offer) {
-                    self.restart();
+                    self.restart(false);
                 }
             }
             update_ui::Choice::InstalledElsewhere => self.notice_update_elsewhere(),
@@ -447,21 +447,28 @@ impl App {
     }
 
     /// Starts the new version on this window's file, in the same pane and
-    /// at the same line, then quits.
-    fn restart(&mut self) {
+    /// at the same line, then quits. `behind`: without coming forward.
+    fn restart(&mut self, behind: bool) {
         let pane = self.current_pane();
         // In the rendered view, the page's caret if it has one: Orca moves
         // it as you read, as for F6.
         let page_line = || self.view.run_script("caretLine()").and_then(|l| l.trim_matches('"').parse::<i64>().ok());
         let line = if pane == Pane::View { page_line() } else { None }.unwrap_or_else(|| self.caret_line());
         let mut args: Vec<OsString> = vec![if pane == Pane::Editor { "--edit" } else { "--view" }.into()];
+        if behind {
+            args.push("--behind".into());
+        }
+        // The log carries on in the new version.
+        if let Some(log) = LOG_FILE.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+            args.extend(["--log".into(), log.into_os_string()]);
+        }
         if let Some(path) = &self.doc.path {
             args.extend(["--line".into(), line.to_string().into(), path.clone().into_os_string()]);
         }
         debug_log(&format!("restarting on the new version: {args:?}"));
         // Let go of the file first, or the new window would hand it back to this one.
         self._claim = None;
-        match update::relaunch(&args) {
+        match update::relaunch(&args, behind) {
             Ok(()) => std::process::exit(0),
             Err(e) => {
                 MessageDialog::builder(
@@ -484,7 +491,8 @@ impl App {
             return;
         }
         if !self.is_dirty() {
-            self.restart();
+            // Behind the window that installed it.
+            self.restart(true);
             return;
         }
         // Asked once; from here, saving restarts this window.
@@ -578,9 +586,10 @@ impl App {
         if let Some(line) = line {
             self.set_caret_line(line as i64);
         }
+        let forward = !target.behind;
         match pane {
             Pane::Editor => {
-                self.bring_forward_then(|app| app.focus_editor());
+                self.bring_forward_then(forward, |app| app.focus_editor());
             }
             Pane::View => {
                 // Move the screen reader when there's somewhere to go, or
@@ -590,14 +599,14 @@ impl App {
                 self.update_render();
                 self.last_switch = Instant::now();
                 #[cfg(target_os = "macos")]
-                self.bring_forward_then(|app| {
+                self.bring_forward_then(forward, |app| {
                     app.focus_view();
                     if move_reader {
                         app.focus_render_block();
                     }
                 });
                 #[cfg(not(target_os = "macos"))]
-                self.bring_forward_then(|app| {
+                self.bring_forward_then(forward, |app| {
                     app.focus_view();
                     if move_reader {
                         app.move_reader_when_active();
@@ -618,8 +627,12 @@ impl App {
     /// Windows comes forward first (and waits; see `move_reader_when_active`).
     /// VoiceOver puts its cursor back where it was when an app comes
     /// forward, unless focus has already moved, so macOS moves first.
-    fn bring_forward_then(&mut self, move_focus: impl FnOnce(&mut Self)) {
-        if cfg!(target_os = "macos") {
+    /// Without `forward`, it only moves focus, ready for when you come back.
+    fn bring_forward_then(&mut self, forward: bool, move_focus: impl FnOnce(&mut Self)) {
+        if !forward {
+            debug_log("staying behind");
+            move_focus(self);
+        } else if cfg!(target_os = "macos") {
             move_focus(self);
             self.bring_forward();
         } else {
@@ -713,6 +726,9 @@ impl App {
                 }
             }
         }
+        #[cfg(windows)]
+        debug_log(&format!("brought the window forward; in front: {}", update::foreground_process()));
+        #[cfg(not(windows))]
         debug_log("brought the window forward");
     }
 
@@ -943,7 +959,12 @@ fn open_window(path: Option<PathBuf>, target: Target) {
         .append_item(ID_SWITCH, "&Switch pane\tF6", "Move between the editor and the rendered view")
         .build();
     let help_menu = Menu::builder()
-        .append_item(ID_CHECK_UPDATES, "Check for &updates...", "Look for a new version of mder")
+        // With the version, as in the maintainer's other apps.
+        .append_item(
+            ID_CHECK_UPDATES,
+            &format!("Check for &update from {}", update::VERSION),
+            "Look for a new version of mder",
+        )
         .append_item(ID_ABOUT, "&About mder", "Version, credits and license")
         .build();
     // On macOS, Options goes in a menu only for wxWidgets to move it to

@@ -1,5 +1,6 @@
 //! Command line: `mder [--edit | --view] [--line N] [--find TEXT] [--anchor SLUG] [--log FILE] [FILE[:LINE][#ANCHOR]]`,
-//! or `mder --register` / `mder --unregister`.
+//! or `mder --register` / `mder --unregister`. Restarting after an update
+//! can also add `--behind`.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -24,6 +25,10 @@ pub struct Target {
     /// window forward. A window that already has the file needs it to come
     /// forward, since Wayland won't let a window just take the front.
     pub activation_token: Option<String>,
+    /// `--behind`: open without coming forward. For a window restarting on
+    /// a new version that another window installed, so the window you
+    /// installed from stays in front. Not passed between processes.
+    pub behind: bool,
 }
 
 impl Target {
@@ -101,6 +106,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Launch {
         match arg.to_str() {
             Some("--edit") => launch.target.pane = Some(Pane::Editor),
             Some("--view") => launch.target.pane = Some(Pane::View),
+            Some("--behind") => launch.target.behind = true,
             Some("--register") => launch.command = Some(Command::Register),
             Some("--unregister") => launch.command = Some(Command::Unregister),
             Some("--line") => launch.target.line = next_text(&mut args).and_then(|v| v.parse().ok()),
@@ -205,6 +211,8 @@ mod tests {
         assert_eq!(l.path, Some(PathBuf::from("notes.md")));
         assert_eq!(parse_str("--view notes.md").target.pane, Some(Pane::View));
         assert_eq!(parse_str("notes.md").target.pane, None);
+        assert!(parse_str("--behind notes.md").target.behind);
+        assert!(!parse_str("notes.md").target.behind);
     }
 
     #[test]
@@ -217,6 +225,7 @@ mod tests {
             fresh: false,
             log: Some(PathBuf::from(r"C:\logs\mder.log")),
             activation_token: Some("a1b2_c3".into()),
+            behind: false,
         };
         assert_eq!(Target::decode(&t.encode()), t);
     }

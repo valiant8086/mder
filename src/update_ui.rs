@@ -1,4 +1,4 @@
-//! The update dialogs: the daily check, Help, Check for updates, the "A new
+//! The update dialogs: the daily check, Help, Check for update, the "A new
 //! update is available!" dialog with Install Now, Ignore Version and Maybe
 //! Later, and the download. The work itself is in update.rs.
 
@@ -14,7 +14,7 @@ use crate::update::{self, Entry, VERSION};
 
 /// The daily check waits this long between checks.
 const DAILY: u64 = 24 * 60 * 60;
-/// Help, Check for updates waits this long between checks.
+/// Help, Check for update waits this long between checks.
 const MANUAL_WAIT: u64 = 5 * 60;
 /// Two windows starting together share one daily check.
 const CHECK_LOCK_SECS: u64 = 120;
@@ -88,7 +88,7 @@ pub fn daily_result(result: Result<Vec<Entry>, String>) -> Option<Offer> {
     Some(offer)
 }
 
-/// Help, Check for updates: always says what it found. Returns a newer
+/// Help, Check for update: always says what it found. Returns a newer
 /// version to offer, even one you ignored.
 pub fn check_now(parent: &Frame) -> Option<Offer> {
     let settings = Settings::load();
